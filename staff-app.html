@@ -1,0 +1,1516 @@
+<!DOCTYPE html>
+<!--
+  ╔══════════════════════════════════════════════════════════════════╗
+  ║  GREEN SALON — STAFF BILLING APP (staff-app.html)               ║
+  ║  Version: FINAL                                                  ║
+  ║  PWA installable (works offline for reading, submits when online)║
+  ║  Designed for: Mobile + Tablet (portrait + landscape)            ║
+  ╚══════════════════════════════════════════════════════════════════╝
+  
+  HOW THIS FILE WORKS:
+  - Self-contained: all CSS, JS, and PWA logic in one file
+  - First load: shows setup screen to enter API URL + branch
+  - After setup: shows staff selection grid
+  - Staff taps their card → goes to entry form
+  - Staff selects service/product/expense → submits → logs to Google Sheet
+  - 60-second auto-return timer after each successful submission
+  - Polls getLastUpdate() every 30s — reloads if owner changed anything
+  
+  DEPLOY:
+  - Host this file anywhere (GitHub Pages, Netlify, Google Drive public share)
+  - OR add as a file inside Apps Script (File > New > HTML File) and
+    serve via doGet() returning HtmlService.createHtmlOutputFromFile('staff-app')
+  - Staff visit the URL and tap "Add to Home Screen" to install as PWA
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<!-- Viewport: no user-scale to prevent accidental zoom on mobile -->
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<!-- PWA flags for Android Chrome -->
+<meta name="mobile-web-app-capable" content="yes">
+<!-- PWA flags for iOS Safari -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Green Salon">
+<!-- Theme color for Android Chrome toolbar (matches app background) -->
+<meta name="theme-color" content="#08090d">
+<meta name="description" content="Green Salon Staff Billing App">
+<!-- manifest.json is injected by JS below as a blob URL (no separate file needed) -->
+<link rel="manifest" id="pwa-manifest">
+<!-- iOS home screen icon (inlined SVG as data URI) -->
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='100' fill='%2308090d'/%3E%3Ctext x='256' y='340' font-size='280' text-anchor='middle' fill='%2322d3a8' font-family='Arial'%3E%E2%9C%82%3C/text%3E%3C/svg%3E">
+<!-- Google Fonts: Syne for headings/amounts, DM Sans for body text -->
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<title>Green Salon</title>
+<style>
+/* ── CSS CUSTOM PROPERTIES (design tokens) ──────────────────────── */
+:root {
+  --bg: #08090d;      /* Main background — near black */
+  --s1: #0f1117;      /* Surface 1 — cards, bars */
+  --s2: #181922;      /* Surface 2 — inputs, nested cards */
+  --s3: #20212e;      /* Surface 3 — code snippets, hints */
+  --b:  rgba(255,255,255,0.07);   /* Border subtle */
+  --b2: rgba(255,255,255,0.13);   /* Border visible */
+  --acc:     #22d3a8; /* Accent — teal (main brand color) */
+  --warn:    #f59e0b; /* Warning — amber (tips) */
+  --danger:  #f43f5e; /* Danger — red (expenses, errors) */
+  --purple:  #818cf8; /* Purple (online payment) */
+  --txt:     #eeeef5; /* Primary text */
+  --muted:   #6b6b8a; /* Muted text */
+  --dim:     #9898b8; /* Dim text */
+  --cash:    #22d3a8; /* Cash payment color */
+  --online:  #818cf8; /* Online/Card payment color */
+  --upi:     #fb923c; /* UPI payment color */
+  --product: #a78bfa; /* Product sale color */
+  --expense: #f43f5e; /* Expense color */
+  --r: 12px;          /* Default border radius */
+}
+
+/* ── RESET ───────────────────────────────────────────────────────── */
+/* Remove all default browser spacing and sizing */
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; }
+/* Lock height to viewport — no scrolling at root level (each screen scrolls internally) */
+html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--txt); display: flex; flex-direction: column; }
+
+/* ── TOP BAR ─────────────────────────────────────────────────────── */
+/* Fixed bar at top: logo | branch name | time | change button */
+.bar { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; background: var(--s1); border-bottom: 1px solid var(--b); z-index: 10; }
+.bar-brand { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 18px; letter-spacing: -.5px; user-select: none; }
+.bar-brand em { color: var(--acc); font-style: normal; } /* Italicize "Salon" with accent color */
+.bar-mid { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--dim); }
+/* Pulsing dot = live sync indicator */
+.branch-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--acc); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
+.bar-right { display: flex; align-items: center; gap: 10px; }
+.bar-time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; } /* tabular-nums = fixed-width digits for clock */
+/* "Change Staff" button — hidden on home screen, shown when staff is selected */
+.btn-change { padding: 5px 12px; border-radius: 8px; border: 1px solid var(--b2); background: transparent; color: var(--dim); font-size: 11px; cursor: pointer; display: none; }
+
+/* ── SCREENS SYSTEM ──────────────────────────────────────────────── */
+/* All screens stack absolutely inside .screens container */
+.screens { flex: 1; overflow: hidden; position: relative; }
+/* Each screen fills the container, hidden by default */
+.scr { position: absolute; inset: 0; overflow-y: auto; padding: 16px 16px 90px; display: none; -webkit-overflow-scrolling: touch; }
+/* .on class activates a screen with fade-up animation */
+.scr.on { display: block; animation: fu .18s ease; }
+@keyframes fu { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+/* Tablet padding */
+@media(min-width:600px) { .scr { padding: 20px 28px 100px; } }
+/* Desktop/landscape tablet padding */
+@media(min-width:960px) { .scr { padding: 24px 8% 100px; } }
+/* Max-width content wrapper for large screens */
+.wrap { max-width: 560px; margin: 0 auto; }
+
+/* ── TODAY'S SUMMARY CARD ─────────────────────────────────────────  */
+/* Shown on home screen — total revenue + entries for today */
+.summary-card { background: linear-gradient(135deg,rgba(34,211,168,.12),rgba(34,211,168,.04)); border: 1px solid rgba(34,211,168,.25); border-radius: 16px; padding: 16px 18px; margin-bottom: 16px; }
+.sum-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.sum-label { font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 700; color: var(--acc); }
+.sum-date { font-size: 11px; color: var(--muted); }
+.sum-stats { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; }
+.sum-stat-v { font-family: 'Syne', sans-serif; font-size: 22px; font-weight: 700; }
+.sum-stat-l { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-top: 2px; }
+
+/* ── STAFF GRID ───────────────────────────────────────────────────── */
+/* Responsive grid of staff avatar cards on the home screen */
+.grid-hdr { margin-bottom: 14px; }
+.grid-title { font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 700; }
+.grid-sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.staff-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(130px,1fr)); gap: 12px; margin-bottom: 18px; }
+@media(min-width:600px) { .staff-grid { grid-template-columns: repeat(auto-fill,minmax(150px,1fr)); } }
+@media(min-width:960px) { .staff-grid { grid-template-columns: repeat(auto-fill,minmax(170px,1fr)); } }
+/* Individual staff card */
+.scard { background: var(--s1); border: 1px solid var(--b); border-radius: 24px; padding: 18px 12px; cursor: pointer; text-align: center; transition: all .15s; user-select: none; position: relative; overflow: hidden; }
+/* Hover overlay effect using pseudo-element */
+.scard::before { content: ''; position: absolute; inset: 0; background: var(--acc); opacity: 0; transition: opacity .15s; border-radius: inherit; }
+.scard:active { transform: scale(.93); border-color: var(--acc); }
+.scard:active::before { opacity: .06; }
+/* Staff avatar circle with initials */
+.scard-av { width: 62px; height: 62px; border-radius: 50%; margin: 0 auto 10px; background: var(--s2); border: 2px solid var(--b); display: flex; align-items: center; justify-content: center; font-family: 'Syne', sans-serif; font-size: 23px; font-weight: 800; color: var(--acc); position: relative; z-index: 1; }
+.scard-name { font-size: 14px; font-weight: 500; position: relative; z-index: 1; }
+/* Commission badge below name */
+.scard-badge { display: inline-block; margin-top: 5px; padding: 2px 8px; border-radius: 20px; font-size: 10px; position: relative; z-index: 1; }
+.scard-badge.comm { background: rgba(34,211,168,.12); color: var(--acc); }
+.scard-badge.nocomm { background: rgba(107,107,138,.12); color: var(--muted); }
+
+/* ── GLOBAL ENTRIES (Product / Expense) ──────────────────────────── */
+/* Two large cards on home screen for Product Sale and Expense (no staff required) */
+.global-title { font-family: 'Syne', sans-serif; font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: .8px; text-transform: uppercase; margin-bottom: 10px; }
+.global-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 440px; }
+.gcard { border-radius: 16px; padding: 16px 14px; cursor: pointer; display: flex; align-items: center; gap: 12px; transition: all .15s; border: 1px solid var(--b); }
+.gcard:active { transform: scale(.97); }
+.gcard.prod { background: rgba(167,139,250,.07); border-color: rgba(167,139,250,.25); }
+.gcard.exp  { background: rgba(244,63,94,.07);  border-color: rgba(244,63,94,.25);  }
+.gcard-ic { font-size: 26px; flex-shrink: 0; }
+.gcard-name { font-family: 'Syne', sans-serif; font-size: 14px; font-weight: 700; }
+.gcard.prod .gcard-name { color: var(--product); }
+.gcard.exp  .gcard-name { color: var(--expense); }
+.gcard-desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+/* ── BACK BUTTON ─────────────────────────────────────────────────── */
+.back-btn { display: inline-flex; align-items: center; gap: 7px; background: rgba(34,211,168,.12); color: var(--acc); border: 1px solid rgba(34,211,168,.25); border-radius: 9px; padding: 8px 14px; font-size: 13px; font-weight: 500; cursor: pointer; margin-bottom: 18px; transition: all .15s; user-select: none; }
+.back-btn:active { background: rgba(34,211,168,.22); }
+.back-btn svg { width: 14px; height: 14px; }
+
+/* ── STAFF IDENTITY BAR (shown on entry/log screens) ──────────────── */
+.staff-bar { display: flex; align-items: center; gap: 12px; padding: 13px 16px; background: var(--s1); border: 1px solid var(--b); border-radius: 16px; margin-bottom: 20px; }
+.sb-av { width: 44px; height: 44px; border-radius: 50%; background: var(--s2); border: 2px solid var(--acc); display: flex; align-items: center; justify-content: center; font-family: 'Syne', sans-serif; font-size: 17px; font-weight: 800; color: var(--acc); flex-shrink: 0; }
+/* Variant colors for product/expense flows */
+.sb-av.prod-av { border-color: var(--product); }
+.sb-av.exp-av  { border-color: var(--expense);  }
+.sb-name { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 15px; }
+.sb-date { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+/* ── FORM ELEMENTS ───────────────────────────────────────────────── */
+.flbl { display: block; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 9px; }
+.fsec { margin-bottom: 20px; } /* Form section spacing */
+
+/* Service / product chip grid */
+.svc-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(108px,1fr)); gap: 9px; }
+.chip { padding: 9px 10px; border-radius: 11px; border: 1px solid var(--b); background: var(--s1); cursor: pointer; font-size: 13px; font-weight: 500; text-align: center; transition: all .13s; user-select: none; }
+.chip .cp { font-size: 11px; color: var(--muted); display: block; margin-top: 2px; } /* price sub-label */
+.chip.sel   { border-color: var(--acc);     background: rgba(34,211,168,.1);  color: var(--acc);     } /* selected service */
+.chip.sel-p { border-color: var(--product); background: rgba(167,139,250,.1); color: var(--product); } /* selected product */
+.chip:active { transform: scale(.95); }
+
+/* Divider with "or type manually" label */
+.div { display: flex; align-items: center; gap: 9px; margin: 12px 0; }
+.div-line { flex: 1; height: 1px; background: var(--b); }
+.div-txt { font-size: 11px; color: var(--muted); }
+
+/* Generic form input */
+.fi { width: 100%; padding: 12px 14px; background: var(--s1); border: 1px solid var(--b); border-radius: var(--r); color: var(--txt); font-family: 'DM Sans', sans-serif; font-size: 15px; outline: none; transition: border-color .2s; }
+.fi:focus { border-color: var(--acc); }
+.fi::placeholder { color: var(--muted); }
+
+/* Amount + tip side-by-side row */
+.amt-row { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+.amt-row.one { grid-template-columns: 1fr; } /* full width (expenses) */
+/* Rupee symbol inside input */
+.amt-wrap { position: relative; }
+.rupee { position: absolute; left: 13px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 15px; pointer-events: none; }
+.amt-wrap .fi { padding-left: 29px; } /* indent to not overlap rupee symbol */
+
+/* Payment mode selection: Cash / Online / UPI */
+.pay-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; }
+.pbtn { padding: 13px 7px; border-radius: var(--r); border: 1px solid var(--b); background: var(--s1); cursor: pointer; font-size: 13px; font-weight: 500; text-align: center; transition: all .13s; user-select: none; }
+.pbtn .pi { font-size: 19px; display: block; margin-bottom: 4px; } /* icon above label */
+.pbtn:active { transform: scale(.95); }
+/* Active state colors per payment mode */
+.pbtn.pc { border-color: var(--cash);   background: rgba(34,211,168,.1);  color: var(--cash);   }
+.pbtn.po { border-color: var(--online); background: rgba(129,140,248,.1); color: var(--online); }
+.pbtn.pu { border-color: var(--upi);    background: rgba(251,146,60,.1);  color: var(--upi);    }
+
+/* Submit button */
+.sub-btn { width: 100%; padding: 17px; border-radius: 13px; background: var(--acc); color: #08090d; font-family: 'Syne', sans-serif; font-size: 16px; font-weight: 700; border: none; cursor: pointer; transition: all .15s; margin-top: 9px; display: flex; align-items: center; justify-content: center; gap: 7px; }
+.sub-btn.prod-clr { background: var(--product); } /* purple for products */
+.sub-btn.exp-clr  { background: var(--expense);  } /* red for expenses */
+.sub-btn:active   { opacity: .85; transform: scale(.98); }
+.sub-btn:disabled { opacity: .3; cursor: not-allowed; transform: none; }
+
+/* ── MY LOG SCREEN ───────────────────────────────────────────────── */
+/* Summary stat cards at top of log screen */
+.log-sum { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-bottom: 16px; }
+.ls-card { background: var(--s1); border: 1px solid var(--b); border-radius: 13px; padding: 14px; }
+.ls-lbl  { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .7px; margin-bottom: 6px; }
+.ls-val  { font-family: 'Syne', sans-serif; font-size: 22px; font-weight: 700; }
+.ls-val.g { color: var(--acc);  } /* green for revenue */
+.ls-val.y { color: var(--warn); } /* amber for tips */
+/* Action buttons row (Export CSV, Email) */
+.log-actions { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+.log-act-btn { padding: 10px 15px; border-radius: 10px; border: 1px solid var(--b2); background: var(--s2); cursor: pointer; font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 500; color: var(--txt); display: flex; align-items: center; gap: 7px; }
+.log-act-btn.csv  { border-color: rgba(34,211,168,.3); color: var(--acc);    }
+.log-act-btn.mail { border-color: rgba(129,140,248,.3); color: var(--purple); }
+
+/* ── 60-SECOND AUTO-RETURN TIMER ─────────────────────────────────── */
+/* Thin progress bar that fills from right to left after a submit */
+.timer-section { margin-bottom: 14px; display: none; }
+.timer-label  { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.timer-track  { background: var(--s2); border-radius: 8px; height: 4px; overflow: hidden; }
+.timer-fill   { height: 4px; background: var(--acc); border-radius: 8px; transition: width 1s linear; }
+
+/* ── ENTRY LIST ITEMS ─────────────────────────────────────────────── */
+.elist { display: flex; flex-direction: column; gap: 9px; }
+.eitem { background: var(--s1); border: 1px solid var(--b); border-radius: 13px; padding: 12px 14px; display: flex; align-items: center; gap: 10px; }
+/* Payment mode dot (left side of entry) */
+.edot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.edot.c { background: var(--cash);   }
+.edot.o { background: var(--online); }
+.edot.u { background: var(--upi);    }
+.einfo { flex: 1; min-width: 0; }
+.esvc  { font-weight: 500; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.etime { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.eamt  { text-align: right; flex-shrink: 0; }
+.eamt-v { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 14px; color: var(--acc); }
+.etip   { font-size: 11px; color: var(--warn); margin-top: 1px; }
+/* Report button (far right of each entry) */
+.report-btn { font-size: 11px; color: var(--muted); padding: 3px 8px; border: 1px solid var(--b); border-radius: 6px; cursor: pointer; white-space: nowrap; background: transparent; font-family: 'DM Sans', sans-serif; transition: all .13s; flex-shrink: 0; }
+.report-btn:active { color: var(--danger); border-color: var(--danger); }
+
+/* Empty state */
+.empty { text-align: center; padding: 40px 20px; color: var(--muted); }
+.empty-ic { font-size: 38px; margin-bottom: 8px; opacity: .5; }
+
+/* ── SETUP / ONBOARDING SCREEN ────────────────────────────────────── */
+/* Shown on first launch before API URL is saved */
+.setup-wrap { max-width: 420px; margin: 16px auto 0; text-align: center; }
+.setup-icon { width: 72px; height: 72px; border-radius: 20px; background: linear-gradient(135deg,var(--acc),var(--s2)); border: 1px solid var(--b2); display: flex; align-items: center; justify-content: center; margin: 0 auto 14px; font-size: 32px; }
+.setup-title { font-family: 'Syne', sans-serif; font-size: 21px; font-weight: 700; margin-bottom: 6px; }
+.setup-sub { color: var(--muted); font-size: 13px; line-height: 1.6; margin-bottom: 24px; }
+.sf-lbl  { display: block; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; text-align: left; }
+.sf-hint { font-size: 11px; color: var(--muted); margin-top: -8px; margin-bottom: 12px; line-height: 1.5; text-align: left; }
+.sf-hint code { background: var(--s3); padding: 1px 5px; border-radius: 4px; font-size: 10px; color: var(--acc); }
+.sf-input, .sf-sel { width: 100%; padding: 12px 14px; background: var(--s2); border: 1px solid var(--b); border-radius: var(--r); color: var(--txt); font-size: 14px; font-family: 'DM Sans', sans-serif; outline: none; margin-bottom: 12px; transition: border-color .2s; appearance: none; -webkit-appearance: none; }
+.sf-input:focus, .sf-sel:focus { border-color: var(--acc); }
+.sf-input::placeholder { color: var(--muted); }
+.sf-sel option { background: var(--s2); }
+/* Shows the full API URL as user types branch ID */
+.url-preview { background: var(--s3); border: 1px solid var(--b); border-radius: 9px; padding: 9px 12px; margin-bottom: 12px; font-size: 11px; color: var(--dim); word-break: break-all; display: none; }
+.url-preview.show { display: block; }
+.url-preview span { color: var(--acc); }
+.btn-lock { width: 100%; padding: 15px; background: var(--acc); color: #08090d; border: none; border-radius: var(--r); font-family: 'Syne', sans-serif; font-size: 15px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 7px; margin-top: 4px; }
+.btn-lock:active { opacity: .85; }
+.setup-err { font-size: 13px; text-align: center; margin-top: 10px; min-height: 18px; }
+.setup-err.err  { color: var(--danger); }
+.setup-err.ok   { color: var(--acc);    }
+.setup-err.info { color: var(--muted);  }
+.setup-note { font-size: 11px; color: var(--muted); text-align: center; margin-top: 14px; line-height: 1.7; padding: 11px 13px; background: var(--s2); border-radius: 10px; }
+.setup-note strong { color: var(--txt); }
+
+/* ── REPORT MODAL (slide-up sheet) ───────────────────────────────── */
+.modal-ov { position: fixed; inset: 0; background: rgba(0,0,0,.65); display: none; align-items: flex-end; justify-content: center; z-index: 600; }
+.modal-ov.open { display: flex; animation: mup .2s ease; }
+@keyframes mup { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+.modal-box { background: var(--s1); border: 1px solid var(--b2); border-radius: 20px 20px 0 0; padding: 22px 18px 30px; width: 100%; max-width: 560px; }
+.modal-title { font-family: 'Syne', sans-serif; font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+.modal-sub { font-size: 13px; color: var(--muted); margin-bottom: 16px; }
+/* Report type selector buttons */
+.rtype-btn { padding: 12px 14px; border-radius: 11px; border: 1px solid var(--b); background: var(--s2); cursor: pointer; text-align: left; transition: all .13s; margin-bottom: 8px; width: 100%; font-family: 'DM Sans', sans-serif; }
+.rtype-btn.sel { border-color: var(--acc); background: rgba(34,211,168,.07); }
+.rtype-name { font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 700; color: var(--txt); }
+.rtype-desc { font-size: 12px; color: var(--muted); margin-top: 2px; }
+/* Message textarea */
+.mfi { width: 100%; padding: 11px 13px; background: var(--s2); border: 1px solid var(--b); border-radius: 9px; color: var(--txt); font-size: 14px; font-family: 'DM Sans', sans-serif; outline: none; margin-bottom: 10px; transition: border-color .2s; resize: vertical; min-height: 72px; }
+.mfi:focus { border-color: var(--acc); }
+.mfi::placeholder { color: var(--muted); }
+.modal-acts { display: flex; gap: 10px; margin-top: 6px; }
+.btn-rsubmit { flex: 1; padding: 13px; background: var(--danger); color: #fff; border: none; border-radius: 10px; font-family: 'Syne', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; }
+.btn-rsubmit:disabled { opacity: .4; cursor: not-allowed; }
+.btn-rcancel { padding: 13px 16px; background: transparent; border: 1px solid var(--b2); color: var(--muted); border-radius: 10px; font-size: 14px; cursor: pointer; font-family: 'DM Sans', sans-serif; }
+
+/* ── BOTTOM NAVIGATION ────────────────────────────────────────────── */
+/* Shows after staff is selected: Home | Entry | My Log */
+.bnav { flex-shrink: 0; display: none; border-top: 1px solid var(--b); background: var(--s1); padding-bottom: env(safe-area-inset-bottom,0); } /* safe-area = iOS home indicator padding */
+.bnav.vis { display: flex; }
+.ni { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 11px 4px; cursor: pointer; color: var(--muted); font-size: 11px; user-select: none; }
+.ni.on  { color: var(--acc); }
+.ni svg { width: 21px; height: 21px; }
+
+/* ── TOAST NOTIFICATION ───────────────────────────────────────────── */
+/* Slides up from bottom when entry is submitted or error occurs */
+.toast { position: fixed; bottom: 74px; left: 50%; transform: translateX(-50%) translateY(14px); background: var(--acc); color: #08090d; padding: 11px 22px; border-radius: 50px; font-weight: 600; font-size: 13px; opacity: 0; transition: all .26s cubic-bezier(.34,1.56,.64,1); z-index: 999; white-space: nowrap; pointer-events: none; }
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.err  { background: var(--danger); color: #fff; }
+
+/* ── LOADING SPINNER ──────────────────────────────────────────────── */
+.ld { display: flex; align-items: center; justify-content: center; padding: 50px 20px; color: var(--muted); gap: 9px; }
+.sp { width: 18px; height: 18px; border: 2px solid var(--b2); border-top-color: var(--acc); border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Version watermark (barely visible) */
+.ver-footer { position: fixed; bottom: 2px; right: 6px; font-size: 9px; color: rgba(255,255,255,.06); pointer-events: none; user-select: none; }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     TOP BAR (always visible)
+══════════════════════════════════════════════════════════════════ -->
+<div class="bar">
+  <div class="bar-brand" id="brand-logo">Green <em>Salon</em></div>
+  <!-- Branch name with live pulse dot — hidden until branch is configured -->
+  <div class="bar-mid" id="bar-branch" style="display:none">
+    <div class="branch-dot"></div>
+    <span id="branch-name-top"></span>
+  </div>
+  <div class="bar-right">
+    <span class="bar-time" id="clock"></span>
+    <!-- "Change" button shown when staff entry screen is active -->
+    <button class="btn-change" id="btn-change-staff" onclick="goHome()">← Change</button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     SCREEN CONTAINER — all screens live here, one shown at a time
+══════════════════════════════════════════════════════════════════ -->
+<div class="screens">
+
+  <!-- ─────────────────────────────────────────────
+       SCREEN: SETUP — first-time API configuration
+  ───────────────────────────────────────────────── -->
+  <div class="scr on" id="scr-setup">
+    <div class="setup-wrap">
+      <div class="setup-icon">✂️</div>
+      <div class="setup-title">Welcome to Green Salon</div>
+      <div class="setup-sub">Enter your deployment URL and branch to connect this tablet to your Google Sheet.</div>
+
+      <!-- API URL input — the /exec URL from Apps Script deployment -->
+      <label class="sf-lbl" for="sf-url">Apps Script URL</label>
+      <input class="sf-input" id="sf-url" type="url" placeholder="https://script.google.com/macros/s/AKf.../exec" oninput="previewUrl()">
+      <div class="sf-hint">Copy the <code>/exec</code> URL from Apps Script → Deploy → Manage Deployments</div>
+
+      <!-- Branch selection — populated from API after URL is entered -->
+      <label class="sf-lbl" for="sf-branch">Branch</label>
+      <select class="sf-sel" id="sf-branch">
+        <option value="">— Enter URL above to load branches —</option>
+        <option value="branch1">Branch 1 (JC Nagar)</option>
+        <option value="branch2">Branch 2 (Koramangala)</option>
+        <option value="branch3">Branch 3 (Indiranagar)</option>
+      </select>
+
+      <!-- Live URL preview so staff can verify the URL looks right -->
+      <div class="url-preview" id="url-preview">
+        Connecting to: <span id="url-preview-text"></span>
+      </div>
+
+      <button class="btn-lock" onclick="saveSetup()">
+        🔒 Connect & Open App
+      </button>
+      <div class="setup-err" id="setup-err"></div>
+      <div class="setup-note">
+        <strong>For Admins:</strong> Make sure the Apps Script is deployed with
+        "Execute as: Me" and "Who has access: Anyone". No login required for staff.
+      </div>
+    </div>
+  </div>
+
+  <!-- ─────────────────────────────────────────────
+       SCREEN: HOME — staff selection grid
+  ───────────────────────────────────────────────── -->
+  <div class="scr" id="scr-home">
+    <div class="wrap">
+      <!-- Today's branch summary (revenue / tips / entry count) -->
+      <div class="summary-card" id="summary-card">
+        <div class="sum-top">
+          <div class="sum-label">📊 Today's Summary</div>
+          <div class="sum-date" id="sum-date"></div>
+        </div>
+        <div class="sum-stats">
+          <div>
+            <div class="sum-stat-v" id="sum-rev">₹—</div>
+            <div class="sum-stat-l">Revenue</div>
+          </div>
+          <div>
+            <div class="sum-stat-v" style="color:var(--warn)" id="sum-tip">₹—</div>
+            <div class="sum-stat-l">Tips</div>
+          </div>
+          <div>
+            <div class="sum-stat-v" style="color:var(--purple)" id="sum-cnt">—</div>
+            <div class="sum-stat-l">Entries</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Staff card grid -->
+      <div class="grid-hdr">
+        <div class="grid-title">Select Staff</div>
+        <div class="grid-sub">Tap your card to start recording a service</div>
+      </div>
+      <!-- Populated dynamically by renderStaff() -->
+      <div class="staff-grid" id="staff-grid">
+        <div class="ld"><div class="sp"></div> Loading…</div>
+      </div>
+
+      <!-- Global entry cards (don't require staff selection) -->
+      <div class="global-title">Branch Entries</div>
+      <div class="global-cards">
+        <!-- Product Sale -->
+        <div class="gcard prod" onclick="openProduct()">
+          <div class="gcard-ic">📦</div>
+          <div>
+            <div class="gcard-name">Product Sale</div>
+            <div class="gcard-desc">Record product sold</div>
+          </div>
+        </div>
+        <!-- Expense -->
+        <div class="gcard exp" onclick="openExpense()">
+          <div class="gcard-ic">💸</div>
+          <div>
+            <div class="gcard-name">Expense</div>
+            <div class="gcard-desc">Log a branch expense</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─────────────────────────────────────────────
+       SCREEN: SERVICE ENTRY — for selected staff
+  ───────────────────────────────────────────────── -->
+  <div class="scr" id="scr-entry">
+    <div class="wrap">
+      <!-- Back button to return to home screen -->
+      <button class="back-btn" onclick="goHome()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>
+        Back
+      </button>
+
+      <!-- Shows selected staff's name + today's date -->
+      <div class="staff-bar" id="entry-staff-bar">
+        <div class="sb-av" id="entry-av"></div>
+        <div>
+          <div class="sb-name" id="entry-name"></div>
+          <div class="sb-date" id="entry-date"></div>
+        </div>
+      </div>
+
+      <!-- 60s auto-return countdown bar (appears after submit) -->
+      <div class="timer-section" id="timer-sec">
+        <div class="timer-label">↩ Returning to home in <span id="timer-count">60</span>s</div>
+        <div class="timer-track"><div class="timer-fill" id="timer-fill" style="width:100%"></div></div>
+      </div>
+
+      <!-- ── Service selection chips ──────────────────── -->
+      <div class="fsec">
+        <label class="flbl">Select Service</label>
+        <!-- Chips populated from API by renderServices() -->
+        <div class="svc-grid" id="svc-chips">
+          <div class="ld"><div class="sp"></div></div>
+        </div>
+        <!-- Divider + manual entry option -->
+        <div class="div"><div class="div-line"></div><div class="div-txt">or type manually</div><div class="div-line"></div></div>
+        <input class="fi" id="svc-custom" type="text" placeholder="Type service name…" oninput="clearChipSel()">
+      </div>
+
+      <!-- ── Amount + Tip inputs ─────────────────────── -->
+      <div class="fsec">
+        <label class="flbl">Amount & Tip</label>
+        <div class="amt-row">
+          <div class="amt-wrap">
+            <span class="rupee">₹</span>
+            <!-- inputmode="decimal" shows numeric keyboard on mobile -->
+            <input class="fi" id="svc-amt" type="number" min="0" step="0.01" placeholder="0" inputmode="decimal" oninput="autoFillPrice()">
+          </div>
+          <div class="amt-wrap">
+            <span class="rupee">₹</span>
+            <input class="fi" id="svc-tip" type="number" min="0" step="0.01" placeholder="Tip (optional)" inputmode="decimal">
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Payment mode ────────────────────────────── -->
+      <div class="fsec">
+        <label class="flbl">Payment Mode</label>
+        <div class="pay-grid">
+          <button class="pbtn" id="pay-cash"   onclick="setPay('Cash')">  <span class="pi">💵</span>Cash   </button>
+          <button class="pbtn" id="pay-online" onclick="setPay('Online')"><span class="pi">💳</span>Online </button>
+          <button class="pbtn" id="pay-upi"    onclick="setPay('UPI')">   <span class="pi">📲</span>UPI    </button>
+        </div>
+      </div>
+
+      <!-- ── Submit button ──────────────────────────── -->
+      <button class="sub-btn" id="submit-svc" onclick="submitService()">
+        ✓ Submit Entry
+      </button>
+    </div>
+  </div>
+
+  <!-- ─────────────────────────────────────────────
+       SCREEN: PRODUCT SALE
+  ───────────────────────────────────────────────── -->
+  <div class="scr" id="scr-product">
+    <div class="wrap">
+      <button class="back-btn" onclick="goHome()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>
+        Back
+      </button>
+
+      <!-- Product flow identity bar — shows branch name not staff name -->
+      <div class="staff-bar">
+        <div class="sb-av prod-av">📦</div>
+        <div>
+          <div class="sb-name">Product Sale</div>
+          <div class="sb-date" id="prod-date"></div>
+        </div>
+      </div>
+
+      <!-- Product chips -->
+      <div class="fsec">
+        <label class="flbl">Select Product</label>
+        <div class="svc-grid" id="prod-chips"><div class="ld"><div class="sp"></div></div></div>
+        <div class="div"><div class="div-line"></div><div class="div-txt">or type manually</div><div class="div-line"></div></div>
+        <input class="fi" id="prod-custom" type="text" placeholder="Type product name…" oninput="clearProdChipSel()">
+      </div>
+
+      <div class="fsec">
+        <label class="flbl">Amount</label>
+        <div class="amt-row one">
+          <div class="amt-wrap">
+            <span class="rupee">₹</span>
+            <input class="fi" id="prod-amt" type="number" min="0" step="0.01" placeholder="0" inputmode="decimal" oninput="autoProdPrice()">
+          </div>
+        </div>
+      </div>
+
+      <div class="fsec">
+        <label class="flbl">Payment Mode</label>
+        <div class="pay-grid">
+          <button class="pbtn" id="ppay-cash"   onclick="setProdPay('Cash')">  <span class="pi">💵</span>Cash   </button>
+          <button class="pbtn" id="ppay-online" onclick="setProdPay('Online')"><span class="pi">💳</span>Online </button>
+          <button class="pbtn" id="ppay-upi"    onclick="setProdPay('UPI')">   <span class="pi">📲</span>UPI    </button>
+        </div>
+      </div>
+
+      <button class="sub-btn prod-clr" id="submit-prod" onclick="submitProduct()">✓ Submit Product Sale</button>
+    </div>
+  </div>
+
+  <!-- ─────────────────────────────────────────────
+       SCREEN: EXPENSE
+  ───────────────────────────────────────────────── -->
+  <div class="scr" id="scr-expense">
+    <div class="wrap">
+      <button class="back-btn" onclick="goHome()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>
+        Back
+      </button>
+
+      <div class="staff-bar">
+        <div class="sb-av exp-av">💸</div>
+        <div>
+          <div class="sb-name">Expense</div>
+          <div class="sb-date" id="exp-date"></div>
+        </div>
+      </div>
+
+      <!-- Description text input for the expense -->
+      <div class="fsec">
+        <label class="flbl">Description</label>
+        <input class="fi" id="exp-desc" type="text" placeholder="e.g. Stationery, Supplies, Electricity…">
+      </div>
+
+      <div class="fsec">
+        <label class="flbl">Amount</label>
+        <div class="amt-row one">
+          <div class="amt-wrap">
+            <span class="rupee">₹</span>
+            <input class="fi" id="exp-amt" type="number" min="0" step="0.01" placeholder="0" inputmode="decimal">
+          </div>
+        </div>
+      </div>
+
+      <div class="fsec">
+        <label class="flbl">Payment Mode</label>
+        <div class="pay-grid">
+          <button class="pbtn" id="epay-cash"   onclick="setExpPay('Cash')">  <span class="pi">💵</span>Cash   </button>
+          <button class="pbtn" id="epay-online" onclick="setExpPay('Online')"><span class="pi">💳</span>Online </button>
+          <button class="pbtn" id="epay-upi"    onclick="setExpPay('UPI')">   <span class="pi">📲</span>UPI    </button>
+        </div>
+      </div>
+
+      <button class="sub-btn exp-clr" id="submit-exp" onclick="submitExpense()">✓ Submit Expense</button>
+    </div>
+  </div>
+
+  <!-- ─────────────────────────────────────────────
+       SCREEN: MY LOG — staff's today's entries
+  ───────────────────────────────────────────────── -->
+  <div class="scr" id="scr-log">
+    <div class="wrap">
+      <button class="back-btn" onclick="showScreen('scr-entry')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>
+        Back to Entry
+      </button>
+
+      <div class="staff-bar" id="log-staff-bar">
+        <div class="sb-av" id="log-av"></div>
+        <div>
+          <div class="sb-name" id="log-name"></div>
+          <div class="sb-date" id="log-date"></div>
+        </div>
+      </div>
+
+      <!-- Revenue + tips summary stats -->
+      <div class="log-sum">
+        <div class="ls-card">
+          <div class="ls-lbl">My Revenue</div>
+          <div class="ls-val g" id="log-rev">₹—</div>
+        </div>
+        <div class="ls-card">
+          <div class="ls-lbl">My Tips</div>
+          <div class="ls-val y" id="log-tip">₹—</div>
+        </div>
+      </div>
+
+      <!-- Action buttons (stub — actual CSV export is client-side) -->
+      <div class="log-actions">
+        <button class="log-act-btn csv" onclick="exportCSV()">📄 Export CSV</button>
+      </div>
+
+      <!-- Entry list — populated by loadMyLog() -->
+      <div class="elist" id="entry-list">
+        <div class="ld"><div class="sp"></div> Loading…</div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- end .screens -->
+
+<!-- ══════════════════════════════════════════════════════════════════
+     BOTTOM NAVIGATION (hidden until staff selected)
+══════════════════════════════════════════════════════════════════ -->
+<div class="bnav" id="bnav">
+  <!-- Home tab -->
+  <div class="ni" id="ni-home" onclick="goHome()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+    Home
+  </div>
+  <!-- Entry tab -->
+  <div class="ni" id="ni-entry" onclick="showEntryScreen()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+    Entry
+  </div>
+  <!-- My Log tab -->
+  <div class="ni" id="ni-log" onclick="loadMyLog()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"/></svg>
+    My Log
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     REPORT MODAL — slides up when staff taps "Report" on an entry
+══════════════════════════════════════════════════════════════════ -->
+<div class="modal-ov" id="report-modal" onclick="closeReportModal(event)">
+  <div class="modal-box">
+    <div class="modal-title">Report an Entry</div>
+    <div class="modal-sub" id="modal-entry-info">Entry details</div>
+
+    <!-- Report type buttons -->
+    <button class="rtype-btn" id="rt-dup" onclick="selectRType('duplicate')">
+      <div class="rtype-name">🔁 Duplicate Entry</div>
+      <div class="rtype-desc">This entry was submitted twice by mistake</div>
+    </button>
+    <button class="rtype-btn" id="rt-mis" onclick="selectRType('mis-click')">
+      <div class="rtype-name">❌ Mis-click / Wrong Service</div>
+      <div class="rtype-desc">Wrong service or amount was selected</div>
+    </button>
+    <button class="rtype-btn" id="rt-cus" onclick="selectRType('custom')">
+      <div class="rtype-name">💬 Custom Note</div>
+      <div class="rtype-desc">Describe the issue in your own words</div>
+    </button>
+
+    <!-- Optional message -->
+    <textarea class="mfi" id="report-msg" placeholder="Add a note (optional)…" rows="2"></textarea>
+
+    <div class="modal-acts">
+      <button class="btn-rcancel" onclick="closeReportModal()">Cancel</button>
+      <button class="btn-rsubmit" id="btn-rsubmit" onclick="submitReport()">Submit Report</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast notification (slides up at bottom) -->
+<div class="toast" id="toast"></div>
+<!-- Version watermark -->
+<div class="ver-footer">Green Salon FINAL</div>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     JAVASCRIPT
+══════════════════════════════════════════════════════════════════ -->
+<script>
+// ── APP STATE ────────────────────────────────────────────────────
+// All app state lives in this object to avoid global variable pollution.
+const APP = {
+  apiUrl:     "",          // Apps Script /exec URL (saved in localStorage)
+  branchId:   "",          // Selected branch ID (e.g. "branch1")
+  branchName: "",          // Human-readable branch name (from API)
+  staff:      [],          // Array of staff objects from API
+  services:   [],          // Array of service objects from API
+  products:   [],          // Array of product objects from API
+  selStaff:   null,        // Currently selected staff member object
+  selService: "",          // Selected service name from chips
+  selPayment: "",          // Selected payment mode: "Cash" | "Online" | "UPI"
+  prodPay:    "",          // Product payment mode
+  expPay:     "",          // Expense payment mode
+  selProd:    "",          // Selected product name from chips
+  timerHandle: null,       // setInterval handle for 60s auto-return
+  pollHandle:  null,       // setInterval handle for 30s update polling
+  lastUpdate:  "",         // Last known lastUpdate timestamp from API
+  reportEntry: null,       // Entry object being reported via modal
+  reportType:  "",         // Selected report type in modal
+};
+
+// ── PWA MANIFEST (injected as Blob URL — no separate manifest.json file needed) ──
+// The manifest tells the browser this page can be installed as an app.
+(function injectManifest() {
+  const manifest = {
+    name:             "Green Salon Staff",
+    short_name:       "Salon",
+    start_url:        location.href,       // app opens at the current URL
+    display:          "standalone",        // no browser chrome when installed
+    background_color: "#08090d",
+    theme_color:      "#08090d",
+    orientation:      "portrait-primary",
+    icons: [
+      // Inline SVG icon for Android
+      { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='100' fill='%2308090d'/%3E%3Ctext x='256' y='340' font-size='280' text-anchor='middle' fill='%2322d3a8'%3E%E2%9C%82%3C/text%3E%3C/svg%3E",
+        sizes: "512x512", type: "image/svg+xml", purpose: "any maskable" }
+    ]
+  };
+  // Encode manifest as a Blob URL and set on the <link rel="manifest"> tag
+  const blob = new Blob([JSON.stringify(manifest)], { type: "application/json" });
+  document.getElementById("pwa-manifest").href = URL.createObjectURL(blob);
+})();
+
+// ── SERVICE WORKER (registered inline via blob URL) ────────────────
+// The service worker enables the PWA install prompt and basic offline capability.
+// We use a simple cache-first strategy: cache the app shell on install.
+if ("serviceWorker" in navigator) {
+  const swCode = `
+    const CACHE = "green-salon-v1";
+    const SHELL = ["${location.href}"]; // cache the app's URL
+    
+    // On install: cache the app shell
+    self.addEventListener("install", e => {
+      e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)));
+      self.skipWaiting(); // activate immediately
+    });
+    
+    // On activate: clean up old caches
+    self.addEventListener("activate", e => {
+      e.waitUntil(caches.keys().then(ks =>
+        Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))
+      ));
+      self.clients.claim(); // take control of all open pages
+    });
+    
+    // On fetch: serve from cache if available (cache-first)
+    self.addEventListener("fetch", e => {
+      // Only intercept GET requests
+      if (e.request.method !== "GET") return;
+      e.respondWith(
+        caches.match(e.request).then(cached => cached || fetch(e.request))
+      );
+    });
+  `;
+  const swBlob = new Blob([swCode], { type: "text/javascript" });
+  navigator.serviceWorker.register(URL.createObjectURL(swBlob))
+    .catch(err => console.log("SW registration failed:", err));
+}
+
+// ── SCREEN MANAGEMENT ────────────────────────────────────────────
+// All screens are <div class="scr"> elements. showScreen() hides all then shows one.
+function showScreen(id) {
+  document.querySelectorAll(".scr").forEach(s => s.classList.remove("on"));
+  document.getElementById(id).classList.add("on");
+}
+
+// ── CLOCK ────────────────────────────────────────────────────────
+// Ticks every second to show current time in the top bar.
+function updateClock() {
+  const now = new Date();
+  const h   = String(now.getHours()).padStart(2,"0");
+  const m   = String(now.getMinutes()).padStart(2,"0");
+  const s   = String(now.getSeconds()).padStart(2,"0");
+  document.getElementById("clock").textContent = `${h}:${m}:${s}`;
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ── TOAST NOTIFICATION ────────────────────────────────────────────
+// Shows a brief message at the bottom of the screen.
+let toastTimer = null;
+function toast(msg, isErr = false, dur = 2800) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.className   = "toast" + (isErr ? " err" : "") + " show";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.classList.remove("show"); }, dur);
+}
+
+// ── SETUP: Load and save API settings ─────────────────────────────
+
+// previewUrl() — called when user types in the URL input
+// Shows the full URL below so they can verify it
+function previewUrl() {
+  const url = document.getElementById("sf-url").value.trim();
+  const preview = document.getElementById("url-preview");
+  if (url.startsWith("https://")) {
+    document.getElementById("url-preview-text").textContent = url;
+    preview.classList.add("show");
+  } else {
+    preview.classList.remove("show");
+  }
+}
+
+// saveSetup() — validates URL, tests API, then saves to localStorage
+async function saveSetup() {
+  const url      = document.getElementById("sf-url").value.trim();
+  const branchId = document.getElementById("sf-branch").value;
+  const errEl    = document.getElementById("setup-err");
+
+  // Validate URL format
+  if (!url.includes("script.google.com") || !url.includes("/exec")) {
+    errEl.className = "setup-err err";
+    errEl.textContent = "⚠ URL must be a valid Apps Script /exec URL";
+    return;
+  }
+  if (!branchId) {
+    errEl.className = "setup-err err";
+    errEl.textContent = "⚠ Please select a branch";
+    return;
+  }
+
+  errEl.className = "setup-err info";
+  errEl.textContent = "⏳ Connecting to Google Sheet…";
+
+  try {
+    // Test the connection by fetching staff list from the selected branch
+    const res  = await fetch(`${url}?action=getStaff&branchId=${branchId}`);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || "API error");
+
+    // Save settings to localStorage — persists across page loads
+    localStorage.setItem("gs_api_url",   url);
+    localStorage.setItem("gs_branch_id", branchId);
+
+    errEl.className = "setup-err ok";
+    errEl.textContent = `✓ Connected! Found ${data.staff.length} staff members.`;
+
+    // Short delay then initialize the app
+    setTimeout(() => initApp(url, branchId, data.staff), 800);
+  } catch (ex) {
+    errEl.className = "setup-err err";
+    errEl.textContent = "❌ Connection failed: " + ex.message;
+  }
+}
+
+// ── APP INITIALIZATION ────────────────────────────────────────────
+// Called on page load (if settings exist) or after successful setup.
+
+// Boot function — runs on page load
+async function boot() {
+  const url      = localStorage.getItem("gs_api_url");
+  const branchId = localStorage.getItem("gs_branch_id");
+
+  if (!url || !branchId) {
+    // No settings saved → show setup screen
+    showScreen("scr-setup");
+    return;
+  }
+
+  APP.apiUrl   = url;
+  APP.branchId = branchId;
+  showScreen("scr-home"); // show home while loading
+  document.getElementById("staff-grid").innerHTML = '<div class="ld"><div class="sp"></div> Loading staff…</div>';
+
+  try {
+    // Fetch staff, services, and products in parallel
+    const [staffRes, svcRes, prodRes] = await Promise.all([
+      fetch(`${url}?action=getStaff&branchId=${branchId}`).then(r => r.json()),
+      fetch(`${url}?action=getServices&branchId=${branchId}`).then(r => r.json()),
+      fetch(`${url}?action=getProducts&branchId=${branchId}`).then(r => r.json()),
+    ]);
+
+    if (!staffRes.success) throw new Error(staffRes.error);
+
+    APP.staff    = staffRes.staff    || [];
+    APP.services = svcRes.services   || [];
+    APP.products = prodRes.products  || [];
+
+    // Try to get branch name from branches list
+    try {
+      const brRes = await fetch(`${url}?action=getBranches`).then(r => r.json());
+      const br    = (brRes.branches || []).find(b => b.id === branchId);
+      APP.branchName = br ? br.name : branchId;
+    } catch (ex) {
+      APP.branchName = branchId;
+    }
+
+    renderStaff();
+    updateBranchBar();
+    loadBranchSummary();
+    startPolling(); // begin 30s poll for owner changes
+  } catch (ex) {
+    document.getElementById("staff-grid").innerHTML = `
+      <div class="ld" style="flex-direction:column;gap:12px;color:var(--danger)">
+        ⚠ Load failed: ${ex.message}
+        <button onclick="boot()" style="padding:9px 20px;border-radius:9px;background:var(--acc);color:#08090d;border:none;cursor:pointer;font-weight:700">Retry</button>
+        <button onclick="resetSetup()" style="padding:7px 16px;border-radius:9px;border:1px solid var(--b2);background:transparent;color:var(--muted);cursor:pointer">Reset Settings</button>
+      </div>`;
+  }
+}
+
+// initApp() — called after successful setup, bootstraps the same as boot()
+async function initApp(url, branchId, staff) {
+  APP.apiUrl   = url;
+  APP.branchId = branchId;
+  APP.staff    = staff;
+  try {
+    const [svcRes, prodRes] = await Promise.all([
+      fetch(`${url}?action=getServices&branchId=${branchId}`).then(r => r.json()),
+      fetch(`${url}?action=getProducts&branchId=${branchId}`).then(r => r.json()),
+    ]);
+    APP.services = svcRes.services  || [];
+    APP.products = prodRes.products || [];
+  } catch (ex) {}
+  try {
+    const brRes = await fetch(`${url}?action=getBranches`).then(r => r.json());
+    const br    = (brRes.branches || []).find(b => b.id === branchId);
+    APP.branchName = br ? br.name : branchId;
+  } catch (ex) { APP.branchName = branchId; }
+  renderStaff();
+  updateBranchBar();
+  loadBranchSummary();
+  showScreen("scr-home");
+  startPolling();
+}
+
+// resetSetup() — clears saved settings and shows setup screen again
+function resetSetup() {
+  localStorage.removeItem("gs_api_url");
+  localStorage.removeItem("gs_branch_id");
+  showScreen("scr-setup");
+  document.getElementById("setup-err").textContent = "";
+}
+
+// ── BRANCH BAR ────────────────────────────────────────────────────
+// Shows branch name + pulse dot in the top bar
+function updateBranchBar() {
+  const bar = document.getElementById("bar-branch");
+  bar.style.display = "flex";
+  document.getElementById("branch-name-top").textContent = APP.branchName;
+}
+
+// ── BRANCH SUMMARY ────────────────────────────────────────────────
+// Fetches today's summary totals and displays in the home screen card
+async function loadBranchSummary() {
+  try {
+    const res  = await fetch(`${APP.apiUrl}?action=getStaff&branchId=${APP.branchId}`);
+    // We use a POST for getBranchSummary since it's a POST-only action
+    const data = await api("getBranchSummary", { branchId: APP.branchId });
+    if (!data.success) return;
+    document.getElementById("sum-rev").textContent = "₹" + fmt(data.totalRevenue || 0);
+    document.getElementById("sum-tip").textContent = "₹" + fmt(data.totalTips    || 0);
+    document.getElementById("sum-cnt").textContent = data.totalEntries || 0;
+    // Format today's date for display
+    const d = new Date();
+    document.getElementById("sum-date").textContent =
+      d.toLocaleDateString("en-IN", { day:"numeric", month:"short", year:"numeric" });
+  } catch (ex) {}
+}
+
+// ── STAFF RENDERING ────────────────────────────────────────────────
+// Renders the staff selection grid on the home screen
+function renderStaff() {
+  const grid = document.getElementById("staff-grid");
+  if (!APP.staff.length) {
+    grid.innerHTML = '<div class="empty"><div class="empty-ic">👤</div><div>No staff found.<br>Add staff from owner panel.</div></div>';
+    return;
+  }
+  // Build one card per staff member
+  grid.innerHTML = APP.staff.map(s => {
+    const initials = s.name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0,2);
+    const commBadge = s.hasCommission === true || s.hasCommission === "TRUE"
+      ? `<span class="scard-badge comm">Commission</span>`
+      : `<span class="scard-badge nocomm">Fixed</span>`;
+    return `
+      <div class="scard" onclick='selectStaff(${JSON.stringify(s)})'>
+        <div class="scard-av">${initials}</div>
+        <div class="scard-name">${s.name}</div>
+        ${commBadge}
+      </div>`;
+  }).join("");
+}
+
+// selectStaff() — called when staff taps their card
+function selectStaff(staffObj) {
+  APP.selStaff   = staffObj;
+  APP.selService = "";
+  APP.selPayment = "";
+  clearForm();
+  renderServices();
+  // Update the identity bar on entry/log screens
+  const initials = staffObj.name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0,2);
+  document.getElementById("entry-av").textContent   = initials;
+  document.getElementById("log-av").textContent     = initials;
+  document.getElementById("entry-name").textContent = staffObj.name;
+  document.getElementById("log-name").textContent   = staffObj.name;
+  const dateStr = new Date().toLocaleDateString("en-IN", { weekday:"long", day:"numeric", month:"short" });
+  document.getElementById("entry-date").textContent = dateStr;
+  document.getElementById("log-date").textContent   = dateStr;
+  // Show bottom nav + change button
+  document.getElementById("bnav").classList.add("vis");
+  document.getElementById("btn-change-staff").style.display = "inline-block";
+  showEntryScreen();
+  navActive("ni-entry");
+}
+
+// goHome() — navigates back to home screen and resets selected staff
+function goHome() {
+  APP.selStaff   = null;
+  APP.selService = "";
+  APP.selPayment = "";
+  clearForm();
+  stopTimer(); // cancel any running auto-return timer
+  document.getElementById("bnav").classList.remove("vis");
+  document.getElementById("btn-change-staff").style.display = "none";
+  loadBranchSummary(); // refresh summary when returning home
+  showScreen("scr-home");
+}
+
+// showEntryScreen() — shows service entry screen for selected staff
+function showEntryScreen() {
+  showScreen("scr-entry");
+  navActive("ni-entry");
+  stopTimer(); // stop any previous timer
+  document.getElementById("timer-sec").style.display = "none";
+}
+
+// ── SERVICE CHIPS ─────────────────────────────────────────────────
+// Renders the chip grid of services on the entry screen
+function renderServices() {
+  const grid = document.getElementById("svc-chips");
+  if (!APP.services.length) {
+    grid.innerHTML = '<div style="color:var(--muted);font-size:13px">No services configured. Add services from owner panel.</div>';
+    return;
+  }
+  grid.innerHTML = APP.services.map(s =>
+    `<div class="chip" data-name="${s.name}" data-price="${s.price}" onclick="selectSvc('${s.name}',${s.price})">
+      ${s.name}<span class="cp">₹${s.price}</span>
+    </div>`
+  ).join("");
+}
+
+// selectSvc() — when a service chip is tapped, mark it selected and auto-fill price
+function selectSvc(name, price) {
+  document.querySelectorAll("#svc-chips .chip").forEach(c => c.classList.remove("sel"));
+  document.querySelector(`#svc-chips .chip[data-name="${name}"]`).classList.add("sel");
+  APP.selService = name;
+  document.getElementById("svc-custom").value = "";          // clear manual input
+  document.getElementById("svc-amt").value    = price > 0 ? price : ""; // auto-fill price
+  document.getElementById("svc-amt").focus();
+}
+
+// clearChipSel() — deselects chips when user types in the manual input
+function clearChipSel() {
+  document.querySelectorAll("#svc-chips .chip").forEach(c => c.classList.remove("sel"));
+  APP.selService = "";
+}
+
+// autoFillPrice() — called when amount input changes (no-op for services, kept for consistency)
+function autoFillPrice() {}
+
+// ── PAYMENT SELECTION ─────────────────────────────────────────────
+// Highlights the selected payment button and stores in APP state
+function setPay(mode) {
+  APP.selPayment = mode;
+  ["Cash","Online","UPI"].forEach(m => {
+    const btn = document.getElementById("pay-" + m.toLowerCase());
+    btn.className = "pbtn" + (m === mode ? " p" + m[0].toLowerCase() : "");
+  });
+}
+function setProdPay(mode) {
+  APP.prodPay = mode;
+  ["Cash","Online","UPI"].forEach(m => {
+    const btn = document.getElementById("ppay-" + m.toLowerCase());
+    btn.className = "pbtn" + (m === mode ? " p" + m[0].toLowerCase() : "");
+  });
+}
+function setExpPay(mode) {
+  APP.expPay = mode;
+  ["Cash","Online","UPI"].forEach(m => {
+    const btn = document.getElementById("epay-" + m.toLowerCase());
+    btn.className = "pbtn" + (m === mode ? " p" + m[0].toLowerCase() : "");
+  });
+}
+
+// ── PRODUCT FLOW ──────────────────────────────────────────────────
+function openProduct() {
+  APP.prodPay = "";
+  APP.selProd = "";
+  document.getElementById("prod-amt").value    = "";
+  document.getElementById("prod-custom").value = "";
+  ["ppay-cash","ppay-online","ppay-upi"].forEach(id =>
+    document.getElementById(id).className = "pbtn"
+  );
+  // Render product chips
+  const grid = document.getElementById("prod-chips");
+  if (!APP.products.length) {
+    grid.innerHTML = '<div style="color:var(--muted);font-size:13px">No products configured.</div>';
+  } else {
+    grid.innerHTML = APP.products.map(p =>
+      `<div class="chip" data-name="${p.name}" data-price="${p.price}" onclick="selectProd('${p.name}',${p.price})">
+        ${p.name}<span class="cp">₹${p.price}</span>
+      </div>`
+    ).join("");
+  }
+  document.getElementById("prod-date").textContent =
+    new Date().toLocaleDateString("en-IN", { weekday:"long", day:"numeric", month:"short" });
+  showScreen("scr-product");
+}
+
+function selectProd(name, price) {
+  document.querySelectorAll("#prod-chips .chip").forEach(c => c.classList.remove("sel","sel-p"));
+  document.querySelector(`#prod-chips .chip[data-name="${name}"]`).classList.add("sel-p");
+  APP.selProd = name;
+  document.getElementById("prod-custom").value = "";
+  document.getElementById("prod-amt").value    = price > 0 ? price : "";
+}
+function clearProdChipSel() {
+  document.querySelectorAll("#prod-chips .chip").forEach(c => c.classList.remove("sel","sel-p"));
+  APP.selProd = "";
+}
+function autoProdPrice() {}
+
+// ── EXPENSE FLOW ──────────────────────────────────────────────────
+function openExpense() {
+  APP.expPay = "";
+  document.getElementById("exp-desc").value = "";
+  document.getElementById("exp-amt").value  = "";
+  ["epay-cash","epay-online","epay-upi"].forEach(id =>
+    document.getElementById(id).className = "pbtn"
+  );
+  document.getElementById("exp-date").textContent =
+    new Date().toLocaleDateString("en-IN", { weekday:"long", day:"numeric", month:"short" });
+  showScreen("scr-expense");
+}
+
+// ── FORM RESET ────────────────────────────────────────────────────
+// Clears all entry form state (called when navigating away)
+function clearForm() {
+  document.querySelectorAll("#svc-chips .chip").forEach(c => c.classList.remove("sel"));
+  const fields = ["svc-custom","svc-amt","svc-tip"];
+  fields.forEach(id => { const el = document.getElementById(id); if(el) el.value = ""; });
+  APP.selService = "";
+  APP.selPayment = "";
+  ["pay-cash","pay-online","pay-upi"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.className = "pbtn";
+  });
+}
+
+// ── API HELPER ────────────────────────────────────────────────────
+// Wrapper around POST calls to the Apps Script API.
+// All POST requests send JSON body with { action, ...data }.
+async function api(action, data = {}) {
+  const res = await fetch(APP.apiUrl, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify({ action, ...data }),
+  });
+  return res.json(); // always returns { success, ...data } or { success:false, error }
+}
+
+// ── SUBMIT SERVICE ENTRY ──────────────────────────────────────────
+async function submitService() {
+  if (!APP.selStaff) { toast("Select a staff member first", true); return; }
+
+  // Get service name from chip selection or manual input
+  const service = APP.selService || document.getElementById("svc-custom").value.trim();
+  if (!service) { toast("Select or type a service", true); return; }
+
+  const amount = parseFloat(document.getElementById("svc-amt").value) || 0;
+  if (amount <= 0) { toast("Enter a valid amount", true); return; }
+
+  const tip = parseFloat(document.getElementById("svc-tip").value) || 0;
+
+  if (!APP.selPayment) { toast("Select payment mode", true); return; }
+
+  // Disable button to prevent double-submit
+  const btn = document.getElementById("submit-svc");
+  btn.disabled = true;
+  btn.textContent = "⏳ Submitting…";
+
+  try {
+    const res = await api("submitEntry", {
+      branchId:      APP.branchId,
+      staffId:       APP.selStaff.id,
+      staffName:     APP.selStaff.name,
+      service,
+      amount,
+      tip,
+      paymentMethod: APP.selPayment,
+    });
+    if (!res.success) throw new Error(res.error);
+
+    toast(`✓ ${service} ₹${amount} saved!`);
+    clearForm();
+    startAutoReturn(); // start 60-second countdown to go back home
+  } catch (ex) {
+    toast("Submit failed: " + ex.message, true);
+  } finally {
+    btn.disabled   = false;
+    btn.textContent = "✓ Submit Entry";
+  }
+}
+
+// ── SUBMIT PRODUCT SALE ────────────────────────────────────────────
+async function submitProduct() {
+  const product = APP.selProd || document.getElementById("prod-custom").value.trim();
+  if (!product) { toast("Select or type a product", true); return; }
+  const amount = parseFloat(document.getElementById("prod-amt").value) || 0;
+  if (amount <= 0) { toast("Enter a valid amount", true); return; }
+  if (!APP.prodPay) { toast("Select payment mode", true); return; }
+
+  const btn = document.getElementById("submit-prod");
+  btn.disabled = true;
+  btn.textContent = "⏳ Submitting…";
+
+  try {
+    const res = await api("submitProduct", {
+      branchId:      APP.branchId,
+      staffId:       APP.selStaff ? APP.selStaff.id   : "GLOBAL",
+      staffName:     APP.selStaff ? APP.selStaff.name : "Branch",
+      product,
+      amount,
+      paymentMethod: APP.prodPay,
+    });
+    if (!res.success) throw new Error(res.error);
+    toast(`✓ ${product} ₹${amount} saved!`);
+    goHome();
+  } catch (ex) {
+    toast("Submit failed: " + ex.message, true);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = "✓ Submit Product Sale";
+  }
+}
+
+// ── SUBMIT EXPENSE ─────────────────────────────────────────────────
+async function submitExpense() {
+  const desc = document.getElementById("exp-desc").value.trim();
+  if (!desc) { toast("Enter expense description", true); return; }
+  const amount = parseFloat(document.getElementById("exp-amt").value) || 0;
+  if (amount <= 0) { toast("Enter a valid amount", true); return; }
+  if (!APP.expPay) { toast("Select payment mode", true); return; }
+
+  const btn = document.getElementById("submit-exp");
+  btn.disabled = true;
+  btn.textContent = "⏳ Submitting…";
+
+  try {
+    const res = await api("submitExpense", {
+      branchId:      APP.branchId,
+      staffId:       APP.selStaff ? APP.selStaff.id   : "GLOBAL",
+      staffName:     APP.selStaff ? APP.selStaff.name : "Branch",
+      description:   desc,
+      amount,
+      paymentMethod: APP.expPay,
+    });
+    if (!res.success) throw new Error(res.error);
+    toast(`✓ Expense ₹${amount} saved!`);
+    goHome();
+  } catch (ex) {
+    toast("Submit failed: " + ex.message, true);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = "✓ Submit Expense";
+  }
+}
+
+// ── 60-SECOND AUTO-RETURN TIMER ───────────────────────────────────
+// After a service entry is submitted, start a countdown.
+// If staff doesn't tap anything, auto-return to home after 60 seconds.
+function startAutoReturn() {
+  stopTimer(); // clear any previous timer
+  let secs = 60;
+  const sec     = document.getElementById("timer-sec");
+  const fill    = document.getElementById("timer-fill");
+  const counter = document.getElementById("timer-count");
+  sec.style.display = "block";
+  fill.style.width  = "100%";
+  counter.textContent = secs;
+
+  APP.timerHandle = setInterval(() => {
+    secs--;
+    counter.textContent = secs;
+    fill.style.width    = (secs / 60 * 100) + "%"; // shrink bar
+    if (secs <= 0) {
+      stopTimer();
+      goHome(); // auto-navigate to home screen
+    }
+  }, 1000);
+}
+
+// stopTimer() — clears the auto-return timer (called on any user navigation)
+function stopTimer() {
+  if (APP.timerHandle) { clearInterval(APP.timerHandle); APP.timerHandle = null; }
+  document.getElementById("timer-sec").style.display = "none";
+}
+
+// ── MY LOG ────────────────────────────────────────────────────────
+// Loads and displays today's entries for the selected staff member
+async function loadMyLog() {
+  if (!APP.selStaff) { toast("Select a staff member first", true); return; }
+  stopTimer(); // stop auto-return timer
+  showScreen("scr-log");
+  navActive("ni-log");
+
+  const list = document.getElementById("entry-list");
+  list.innerHTML = '<div class="ld"><div class="sp"></div> Loading…</div>';
+
+  try {
+    const res = await api("getMyEntries", {
+      branchId: APP.branchId,
+      staffId:  APP.selStaff.id,
+    });
+    if (!res.success) throw new Error(res.error);
+
+    document.getElementById("log-rev").textContent = "₹" + fmt(res.totalAmount || 0);
+    document.getElementById("log-tip").textContent = "₹" + fmt(res.totalTip    || 0);
+
+    if (!res.entries || !res.entries.length) {
+      list.innerHTML = '<div class="empty"><div class="empty-ic">📋</div><div>No entries yet today</div></div>';
+      return;
+    }
+
+    // Store entries on APP for CSV export
+    APP._logEntries = res.entries;
+
+    // Render each entry as a list item
+    list.innerHTML = res.entries.map(e => {
+      const payClass = e.paymentMethod === "Cash" ? "c" : e.paymentMethod === "UPI" ? "u" : "o";
+      return `
+        <div class="eitem">
+          <div class="edot ${payClass}"></div>
+          <div class="einfo">
+            <div class="esvc">${e.service}</div>
+            <div class="etime">${e.timestamp} · ${e.paymentMethod}</div>
+          </div>
+          <div class="eamt">
+            <div class="eamt-v">₹${fmt(e.amount)}</div>
+            ${e.tip > 0 ? `<div class="etip">+₹${fmt(e.tip)} tip</div>` : ""}
+          </div>
+          <button class="report-btn" onclick='openReportModal(${JSON.stringify(e)})'>Report</button>
+        </div>`;
+    }).join("");
+  } catch (ex) {
+    list.innerHTML = `<div class="empty" style="color:var(--danger)">⚠ ${ex.message}</div>`;
+  }
+}
+
+// exportCSV() — client-side CSV export of today's log
+function exportCSV() {
+  const entries = APP._logEntries || [];
+  if (!entries.length) { toast("No entries to export", true); return; }
+  const rows = [["Service","Amount","Tip","Payment","Time"]];
+  entries.forEach(e => rows.push([e.service, e.amount, e.tip || 0, e.paymentMethod, e.timestamp]));
+  const csv  = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href     = url;
+  a.download = `GreenSalon_${APP.selStaff.name}_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── REPORT MODAL ──────────────────────────────────────────────────
+// Opens the report modal pre-filled with the entry details
+function openReportModal(entry) {
+  APP.reportEntry = entry;
+  APP.reportType  = "";
+  // Show entry details in modal subtitle
+  document.getElementById("modal-entry-info").textContent =
+    `${entry.service} · ₹${fmt(entry.amount)} · ${entry.paymentMethod}`;
+  // Reset button states
+  document.querySelectorAll(".rtype-btn").forEach(b => b.classList.remove("sel"));
+  document.getElementById("report-msg").value = "";
+  document.getElementById("btn-rsubmit").disabled = true;
+  document.getElementById("report-modal").classList.add("open");
+}
+
+// selectRType() — highlights selected report type
+function selectRType(type) {
+  APP.reportType = type;
+  document.querySelectorAll(".rtype-btn").forEach(b => b.classList.remove("sel"));
+  const map = { duplicate:"rt-dup", "mis-click":"rt-mis", custom:"rt-cus" };
+  document.getElementById(map[type])?.classList.add("sel");
+  document.getElementById("btn-rsubmit").disabled = false; // enable submit now
+}
+
+// closeReportModal() — closes modal (called on overlay click or cancel)
+function closeReportModal(e) {
+  if (e && e.target !== document.getElementById("report-modal")) return;
+  document.getElementById("report-modal").classList.remove("open");
+}
+
+// submitReport() — sends the report to the API
+async function submitReport() {
+  if (!APP.reportEntry || !APP.reportType) return;
+  const btn = document.getElementById("btn-rsubmit");
+  btn.disabled    = true;
+  btn.textContent = "⏳ Sending…";
+
+  try {
+    const res = await api("submitReport", {
+      branchId:    APP.branchId,
+      staffId:     APP.selStaff?.id   || "",
+      staffName:   APP.selStaff?.name || "Staff",
+      entryRowId:  APP.reportEntry.rowId,
+      entryDetails: `${APP.reportEntry.service} ₹${APP.reportEntry.amount}`,
+      reportType:   APP.reportType,
+      message:      document.getElementById("report-msg").value.trim(),
+    });
+    if (!res.success) throw new Error(res.error);
+    toast("✓ Report submitted — owner will review");
+    document.getElementById("report-modal").classList.remove("open");
+  } catch (ex) {
+    toast("Report failed: " + ex.message, true);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = "Submit Report";
+  }
+}
+
+// ── POLLING — detect owner changes ────────────────────────────────
+// Every 30 seconds, poll getLastUpdate(). If the timestamp changed,
+// reload staff + services + products so changes are instantly visible.
+function startPolling() {
+  if (APP.pollHandle) clearInterval(APP.pollHandle);
+  APP.pollHandle = setInterval(checkForUpdates, 30000); // every 30 seconds
+}
+
+async function checkForUpdates() {
+  try {
+    const res = await fetch(
+      `${APP.apiUrl}?action=getLastUpdate&branchId=${APP.branchId}`
+    ).then(r => r.json());
+    if (!res.success || !res.lastUpdate) return;
+    if (res.lastUpdate === APP.lastUpdate) return; // nothing changed
+    APP.lastUpdate = res.lastUpdate; // store new timestamp
+
+    // Re-fetch staff, services, products
+    const [staffRes, svcRes, prodRes] = await Promise.all([
+      fetch(`${APP.apiUrl}?action=getStaff&branchId=${APP.branchId}`).then(r => r.json()),
+      fetch(`${APP.apiUrl}?action=getServices&branchId=${APP.branchId}`).then(r => r.json()),
+      fetch(`${APP.apiUrl}?action=getProducts&branchId=${APP.branchId}`).then(r => r.json()),
+    ]);
+    if (staffRes.success) { APP.staff    = staffRes.staff    || []; renderStaff(); }
+    if (svcRes.success)   { APP.services = svcRes.services   || []; if(APP.selStaff) renderServices(); }
+    if (prodRes.success)  { APP.products = prodRes.products  || []; }
+  } catch (ex) {} // silently ignore network errors during polling
+}
+
+// ── NAVIGATION HELPERS ────────────────────────────────────────────
+// Marks the active bottom nav item
+function navActive(id) {
+  document.querySelectorAll(".ni").forEach(n => n.classList.remove("on"));
+  document.getElementById(id)?.classList.add("on");
+}
+
+// ── NUMBER FORMATTER ─────────────────────────────────────────────
+// Formats numbers with Indian locale: 1500 → "1,500"
+function fmt(n) {
+  return Number(n).toLocaleString("en-IN", { maximumFractionDigits: 0 });
+}
+
+// ── BOOT ON LOAD ──────────────────────────────────────────────────
+// Initialize as soon as DOM is ready
+document.addEventListener("DOMContentLoaded", boot);
+</script>
+</body>
+</html>

@@ -1,0 +1,1575 @@
+<!DOCTYPE html>
+<!--
+  ╔══════════════════════════════════════════════════════════════════╗
+  ║  GREEN SALON — OWNER / ADMIN PANEL (owner-panel.html)           ║
+  ║  Version: FINAL                                                  ║
+  ║  Access: Desktop browser (responsive down to tablet)            ║
+  ║  Auth: Multi-admin login via ADMIN_ACCOUNTS in Code.gs          ║
+  ╚══════════════════════════════════════════════════════════════════╝
+
+  PAGES IN THIS FILE:
+  ├── Login screen
+  └── App shell (sidebar + content area)
+      ├── All Branches     — branch cards with live stats
+      ├── Today            — real-time service/product/expense dashboard
+      ├── Entries          — full table of today's raw entries with flag/delete
+      ├── Monthly          — aggregated per-day table (matches Google Sheet)
+      ├── Staff            — add/rename/remove/commission toggle
+      ├── Services         — add/remove services shown on staff app
+      ├── Products         — add/remove products shown on staff app
+      ├── Reports          — staff complaints with resolve/ignore actions
+      ├── Settings         — rename branch, emails, fix branch, manual report
+      └── Admin Log        — immutable audit trail of all admin actions
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#07080c">
+<title>Green Salon — Owner Panel</title>
+<!-- Fonts: Syne = headings, DM Sans = body -->
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+/* ── DESIGN TOKENS ──────────────────────────────────────────────── */
+:root {
+  --bg: #07080c;      /* Main background */
+  --s1: #0e0f16;      /* Cards, sidebar */
+  --s2: #161720;      /* Inputs, nested sections */
+  --s3: #1e1f2c;      /* Deeply nested */
+  --b:  rgba(255,255,255,.07);
+  --b2: rgba(255,255,255,.13);
+  --acc:     #22d3a8;
+  --warn:    #f59e0b;
+  --danger:  #f43f5e;
+  --purple:  #818cf8;
+  --product: #a78bfa;
+  --txt:     #eeeef5;
+  --muted:   #6b6b8a;
+  --dim:     #9898b8;
+  --cash:    #22d3a8;
+  --online:  #818cf8;
+  --upi:     #fb923c;
+}
+/* ── RESET ──────────────────────────────────────────────────────── */
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--txt); min-height:100vh; }
+
+/* ══════════════════════════════════════════════════════════════════
+   LOGIN SCREEN
+══════════════════════════════════════════════════════════════════ */
+#login { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
+.lbox { background:var(--s1); border:1px solid var(--b); border-radius:22px; padding:42px 36px; width:100%; max-width:420px; text-align:center; }
+.llogo { font-family:'Syne',sans-serif; font-size:27px; font-weight:800; margin-bottom:5px; }
+.llogo em { color:var(--acc); font-style:normal; }
+.lsub { color:var(--muted); font-size:14px; margin-bottom:4px; }
+.lver { color:var(--acc); font-size:11px; margin-bottom:28px; letter-spacing:1px; }
+/* API URL setup section (only shown when URL not saved) */
+.l-api-section { text-align:left; margin-bottom:20px; padding:14px; background:var(--s2); border-radius:11px; border:1px solid var(--b); }
+.l-api-title { font-size:12px; font-weight:700; color:var(--acc); margin-bottom:8px; letter-spacing:.5px; text-transform:uppercase; }
+.l-api-hint { font-size:11px; color:var(--muted); margin-bottom:8px; line-height:1.5; }
+.l-api-hint code { background:var(--s3); padding:1px 5px; border-radius:4px; font-size:10px; color:var(--acc); }
+.l-api-input { width:100%; padding:10px 12px; background:var(--s1); border:1px solid var(--b); border-radius:8px; color:var(--txt); font-size:12px; font-family:'DM Sans',sans-serif; outline:none; transition:border-color .2s; }
+.l-api-input:focus { border-color:var(--acc); }
+.l-api-input::placeholder { color:var(--muted); }
+/* Login form fields */
+.llbl { display:block; text-align:left; font-size:11px; color:var(--muted); letter-spacing:1px; text-transform:uppercase; margin-bottom:7px; margin-top:14px; }
+.linput { width:100%; padding:13px 15px; background:var(--s2); border:1px solid var(--b); border-radius:11px; color:var(--txt); font-size:15px; font-family:'DM Sans',sans-serif; outline:none; margin-bottom:4px; transition:border-color .2s; }
+.linput:focus { border-color:var(--acc); }
+.lbtn { width:100%; padding:15px; background:var(--acc); color:#07080c; border:none; border-radius:11px; font-family:'Syne',sans-serif; font-size:15px; font-weight:700; cursor:pointer; transition:opacity .15s; margin-top:16px; }
+.lbtn:hover { opacity:.9; }
+.lerr { color:var(--danger); font-size:13px; margin-top:10px; min-height:18px; }
+.lfoot { font-size:10px; color:rgba(255,255,255,.06); margin-top:28px; }
+
+/* ══════════════════════════════════════════════════════════════════
+   APP LAYOUT — fixed sidebar + scrollable content
+══════════════════════════════════════════════════════════════════ */
+#app { display:none; }
+.layout { display:flex; min-height:100vh; }
+
+/* ── SIDEBAR ─────────────────────────────────────────────────────── */
+.side { width:220px; background:var(--s1); border-right:1px solid var(--b); display:flex; flex-direction:column; position:fixed; top:0; bottom:0; left:0; z-index:50; overflow-y:auto; transition:width .2s; }
+.side-top { padding:18px 16px 14px; border-bottom:1px solid var(--b); }
+.side-logo { font-family:'Syne',sans-serif; font-size:16px; font-weight:800; }
+.side-logo em { color:var(--acc); font-style:normal; }
+.side-owner { font-size:11px; color:var(--muted); margin-top:2px; }
+.side-role { display:inline-block; font-size:10px; color:var(--acc); background:rgba(34,211,168,.1); padding:1px 7px; border-radius:10px; margin-top:4px; }
+/* Auto-refresh indicator */
+.side-poll { font-size:9px; color:var(--muted); margin-top:4px; display:flex; align-items:center; gap:4px; }
+.poll-dot { width:5px; height:5px; border-radius:50%; background:var(--acc); animation:pulse 2s infinite; flex-shrink:0; }
+@keyframes pulse { 0%,100%{opacity:1}50%{opacity:.3} }
+.side-nav { padding:10px 8px; flex:1; }
+.snav-sec { font-size:10px; letter-spacing:1px; text-transform:uppercase; color:var(--muted); padding:9px 8px 5px; margin-top:4px; }
+/* Nav link */
+.nl { display:flex; align-items:center; gap:8px; padding:9px 10px; color:var(--dim); font-size:13px; cursor:pointer; border-radius:9px; transition:all .12s; user-select:none; position:relative; }
+.nl:hover { color:var(--txt); background:rgba(255,255,255,.04); }
+.nl.on { color:var(--acc); background:rgba(34,211,168,.09); }
+.nl svg { width:15px; height:15px; flex-shrink:0; }
+/* Badge for pending reports count */
+.nl-badge { position:absolute; right:8px; top:50%; transform:translateY(-50%); background:var(--danger); color:#fff; font-size:10px; font-weight:700; padding:1px 6px; border-radius:10px; min-width:18px; text-align:center; }
+.side-bot { padding:13px 16px; border-top:1px solid var(--b); }
+.logout { color:var(--muted); font-size:13px; cursor:pointer; display:flex; align-items:center; gap:5px; }
+.logout:hover { color:var(--danger); }
+
+/* ── CONTENT AREA ────────────────────────────────────────────────── */
+.content { margin-left:220px; padding:26px; min-height:100vh; }
+/* Each page section (hidden by default) */
+.pg { display:none; }
+.pg.on { display:block; animation:fi .17s ease; }
+@keyframes fi { from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none} }
+
+/* ── PAGE HEADER ─────────────────────────────────────────────────── */
+.ph { display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:22px; gap:14px; flex-wrap:wrap; }
+.ptitle { font-family:'Syne',sans-serif; font-size:23px; font-weight:700; display:flex; align-items:center; gap:7px; }
+.psub { font-size:13px; color:var(--muted); margin-top:2px; }
+
+/* ── BUTTONS ──────────────────────────────────────────────────────── */
+.btn { padding:8px 16px; border-radius:8px; font-size:13px; font-weight:500; cursor:pointer; font-family:'DM Sans',sans-serif; border:none; display:inline-flex; align-items:center; gap:5px; transition:all .12s; }
+.btn-acc     { background:var(--acc); color:#07080c; }
+.btn-acc:hover { opacity:.9; }
+.btn-ghost   { background:transparent; border:1px solid var(--b2); color:var(--dim); }
+.btn-ghost:hover { color:var(--txt); }
+.btn-danger  { background:rgba(244,63,94,.1);  color:var(--danger);  border:1px solid rgba(244,63,94,.22); }
+.btn-danger:hover  { background:rgba(244,63,94,.2); }
+.btn-warn    { background:rgba(245,158,11,.1); color:var(--warn);    border:1px solid rgba(245,158,11,.22); }
+.btn-warn:hover    { background:rgba(245,158,11,.2); }
+.btn-recover { background:rgba(34,211,168,.1); color:var(--acc);     border:1px solid rgba(34,211,168,.22); }
+.btn-recover:hover { background:rgba(34,211,168,.2); }
+.btn-purple  { background:rgba(129,140,248,.1); color:var(--purple); border:1px solid rgba(129,140,248,.22); }
+.btn-purple:hover  { background:rgba(129,140,248,.2); }
+.btn-sm { padding:4px 11px; font-size:11px; border-radius:6px; }
+.btn:disabled { opacity:.4; cursor:not-allowed; }
+
+/* ── STAT CARDS ──────────────────────────────────────────────────── */
+.stats { display:grid; grid-template-columns:repeat(auto-fill,minmax(155px,1fr)); gap:12px; margin-bottom:22px; }
+.sc { background:var(--s1); border:1px solid var(--b); border-radius:13px; padding:16px; }
+.sc-lbl { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; margin-bottom:6px; }
+.sc-val { font-family:'Syne',sans-serif; font-size:24px; font-weight:700; }
+.sc-val.g  { color:var(--acc);     } /* revenue */
+.sc-val.y  { color:var(--warn);    } /* tips */
+.sc-val.p  { color:var(--purple);  } /* count / online */
+.sc-val.pr { color:var(--product); } /* products */
+.sc-val.r  { color:var(--danger);  } /* expenses */
+
+/* ── CARD CONTAINER ──────────────────────────────────────────────── */
+.card { background:var(--s1); border:1px solid var(--b); border-radius:15px; overflow:hidden; margin-bottom:20px; }
+.card-head { padding:13px 18px; border-bottom:1px solid var(--b); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+.card-title { font-family:'Syne',sans-serif; font-weight:700; font-size:14px; }
+.card-body { padding:18px; }
+
+/* ── TABLE ────────────────────────────────────────────────────────── */
+table { width:100%; border-collapse:collapse; }
+th { text-align:left; padding:9px 18px; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; border-bottom:1px solid var(--b); font-weight:500; }
+td { padding:10px 18px; font-size:13px; border-bottom:1px solid rgba(255,255,255,.03); vertical-align:middle; }
+tr:last-child td { border-bottom:none; }
+tr:hover td { background:rgba(255,255,255,.012); }
+/* Flagged/deleted row styling */
+.flagged td { opacity:.38; text-decoration:line-through; }
+/* Payment mode badges */
+.badge { display:inline-block; padding:2px 9px; border-radius:18px; font-size:11px; font-weight:500; }
+.bc { background:rgba(34,211,168,.12); color:var(--cash); }
+.bo { background:rgba(129,140,248,.12); color:var(--online); }
+.bu { background:rgba(251,146,60,.12); color:var(--upi); }
+/* Report type badges */
+.rt-dup { background:rgba(244,63,94,.12);  color:var(--danger); }
+.rt-mis { background:rgba(245,158,11,.12); color:var(--warn); }
+.rt-cus { background:rgba(129,140,248,.12);color:var(--purple); }
+/* Report status badges */
+.st-pend { background:rgba(245,158,11,.12); color:var(--warn); }
+.st-res  { background:rgba(34,211,168,.12); color:var(--acc); }
+.st-ign  { background:rgba(107,107,138,.12);color:var(--muted); }
+
+/* ── BRANCH CARDS ─────────────────────────────────────────────────── */
+.branch-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(275px,1fr)); gap:15px; margin-bottom:18px; }
+.bcard { background:var(--s1); border:1px solid var(--b); border-radius:17px; padding:20px; transition:all .14s; position:relative; overflow:hidden; }
+/* Top accent bar on hover */
+.bcard::before { content:''; position:absolute; top:0; left:0; right:0; height:3px; background:var(--acc); opacity:0; transition:opacity .14s; }
+.bcard-click { cursor:pointer; }
+.bcard-click:hover { border-color:rgba(34,211,168,.3); transform:translateY(-2px); }
+.bcard-click:hover::before { opacity:1; }
+.bcard-deleted { opacity:.6; border-style:dashed; }
+.bcard-name { font-family:'Syne',sans-serif; font-size:16px; font-weight:700; margin-bottom:2px; }
+.bcard-loc { font-size:12px; color:var(--muted); margin-bottom:14px; }
+/* Live stats inside branch card */
+.bcard-stats { display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-bottom:12px; }
+.bcs { background:var(--s2); border-radius:9px; padding:11px; }
+.bcs-lbl { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px; }
+.bcs-val { font-family:'Syne',sans-serif; font-size:19px; font-weight:700; color:var(--acc); }
+.bcard-actions { display:flex; gap:7px; flex-wrap:wrap; }
+.bcard-foot { font-size:10px; color:var(--muted); margin-top:10px; display:flex; align-items:center; justify-content:space-between; }
+.copy-id { cursor:pointer; padding:2px 7px; border:1px solid var(--b); border-radius:4px; color:var(--dim); }
+.copy-id:hover { color:var(--acc); border-color:var(--acc); }
+.deleted-tag { display:inline-block; padding:2px 8px; border-radius:5px; background:rgba(244,63,94,.12); color:var(--danger); font-size:11px; margin-bottom:10px; }
+
+/* ── BREADCRUMB ───────────────────────────────────────────────────── */
+.bc-nav { display:flex; align-items:center; gap:7px; font-size:13px; color:var(--muted); margin-bottom:18px; flex-wrap:wrap; }
+.bc-link { cursor:pointer; color:var(--dim); }
+.bc-link:hover { color:var(--acc); }
+.bc-sep { opacity:.4; }
+
+/* ── STAFF LIST ───────────────────────────────────────────────────── */
+.staff-row { display:flex; align-items:center; gap:11px; padding:12px 18px; border-bottom:1px solid rgba(255,255,255,.04); }
+.staff-row:last-child { border-bottom:none; }
+.staff-row:hover { background:rgba(255,255,255,.018); }
+.sav { width:36px; height:36px; border-radius:50%; background:var(--s2); border:1px solid var(--b); display:flex; align-items:center; justify-content:center; font-family:'Syne',sans-serif; font-size:13px; font-weight:700; color:var(--acc); flex-shrink:0; }
+.sinfo { flex:1; min-width:0; }
+.sname { font-weight:500; font-size:13px; }
+.smeta { font-size:11px; color:var(--muted); margin-top:1px; }
+/* Inline name editor (hidden by default) */
+.sname-edit { display:none; flex:1; }
+.sname-input { width:100%; padding:5px 9px; background:var(--s2); border:1px solid var(--acc); border-radius:7px; color:var(--txt); font-size:13px; font-family:'DM Sans',sans-serif; outline:none; }
+.sactions { display:flex; gap:6px; flex-shrink:0; align-items:center; flex-wrap:wrap; }
+/* Commission toggle container */
+.comm-tgl { display:flex; align-items:center; gap:5px; font-size:11px; color:var(--muted); }
+.comm-input { width:52px; padding:3px 6px; background:var(--s2); border:1px solid var(--b); border-radius:5px; color:var(--txt); font-size:12px; text-align:center; outline:none; }
+.comm-input:focus { border-color:var(--acc); }
+/* Toggle switch */
+.tgl { width:40px; height:21px; background:var(--s2); border:1px solid var(--b2); border-radius:11px; position:relative; cursor:pointer; transition:background .2s; flex-shrink:0; }
+.tgl.on { background:var(--acc); border-color:var(--acc); }
+.tgl::after { content:''; position:absolute; width:15px; height:15px; background:#fff; border-radius:50%; top:2px; left:2px; transition:transform .17s; }
+.tgl.on::after { transform:translateX(19px); }
+.tgl-sm { width:34px; height:18px; }
+.tgl-sm::after { width:12px; height:12px; }
+.tgl-sm.on::after { transform:translateX(16px); }
+
+/* ── FORMS ────────────────────────────────────────────────────────── */
+.form-row { display:grid; grid-template-columns:repeat(auto-fill,minmax(175px,1fr)); gap:12px; margin-bottom:12px; }
+.field label { display:block; font-size:11px; color:var(--muted); letter-spacing:.7px; text-transform:uppercase; margin-bottom:5px; }
+.field input, .field select { width:100%; padding:10px 12px; background:var(--s2); border:1px solid var(--b); border-radius:9px; color:var(--txt); font-size:13px; font-family:'DM Sans',sans-serif; outline:none; transition:border-color .2s; }
+.field input:focus, .field select:focus { border-color:var(--acc); }
+.field input::placeholder { color:var(--muted); }
+.field select option { background:var(--s2); }
+/* Toggle row inside form card */
+.tgl-row { display:flex; align-items:center; justify-content:space-between; padding:9px 0; border-top:1px solid var(--b); margin-top:7px; }
+.tgl-lbl { font-size:13px; }
+.tgl-sub { font-size:11px; color:var(--muted); margin-top:1px; }
+/* Service / product chip tags */
+.svc-tags { display:flex; flex-wrap:wrap; gap:7px; min-height:28px; }
+.stag { display:flex; align-items:center; gap:6px; padding:5px 10px; background:var(--s2); border:1px solid var(--b); border-radius:7px; font-size:12px; }
+.stag .rm { color:var(--muted); cursor:pointer; font-size:15px; line-height:1; }
+.stag .rm:hover { color:var(--danger); }
+/* Rename input row */
+.rename-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px; }
+.rename-row input { flex:1; min-width:140px; padding:8px 12px; background:var(--s2); border:1px solid var(--b); border-radius:8px; color:var(--txt); font-size:13px; font-family:'DM Sans',sans-serif; outline:none; transition:border-color .2s; }
+.rename-row input:focus { border-color:var(--acc); }
+/* Email input boxes */
+.email-box { background:var(--s2); border:1px solid var(--b); border-radius:11px; padding:16px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.email-box input { flex:1; min-width:180px; padding:9px 12px; background:var(--s1); border:1px solid var(--b); border-radius:8px; color:var(--txt); font-size:13px; font-family:'DM Sans',sans-serif; outline:none; transition:border-color .2s; }
+.email-box input:focus { border-color:var(--acc); }
+.email-box input::placeholder { color:var(--muted); }
+
+/* ── REPORTS PAGE ─────────────────────────────────────────────────── */
+/* Left border color coded by report type */
+.report-row { border-left:3px solid var(--b2); }
+.report-row.dup { border-color:var(--danger); }
+.report-row.mis { border-color:var(--warn); }
+.report-row.cus { border-color:var(--purple); }
+/* Expandable detail row (toggled by clicking) */
+.report-detail { padding:10px 18px; background:var(--s2); font-size:12px; color:var(--muted); border-top:1px solid var(--b); display:none; }
+.report-detail.open { display:block; }
+/* Resolve action buttons inside expanded detail */
+.resolve-acts { display:flex; gap:7px; margin-top:10px; flex-wrap:wrap; }
+
+/* ── ADMIN LOG ────────────────────────────────────────────────────── */
+.log-row { padding:10px 18px; border-bottom:1px solid rgba(255,255,255,.03); display:flex; gap:12px; align-items:flex-start; }
+.log-row:last-child { border-bottom:none; }
+.log-time   { font-size:11px; color:var(--muted); flex-shrink:0; min-width:140px; }
+.log-who    { font-size:12px; color:var(--acc); flex-shrink:0; min-width:80px; }
+.log-action { font-size:13px; flex:1; }
+.log-detail { font-size:11px; color:var(--muted); margin-top:2px; }
+
+/* ── LOADER & TOAST ───────────────────────────────────────────────── */
+.ld { display:flex; align-items:center; justify-content:center; padding:38px; color:var(--muted); gap:7px; }
+.sp { width:15px; height:15px; border:2px solid var(--b2); border-top-color:var(--acc); border-radius:50%; animation:spin .7s linear infinite; }
+@keyframes spin { to{transform:rotate(360deg)} }
+.toast { position:fixed; bottom:20px; right:20px; background:var(--acc); color:#07080c; padding:10px 18px; border-radius:9px; font-weight:600; font-size:13px; opacity:0; transform:translateY(7px); transition:all .24s; z-index:999; max-width:340px; pointer-events:none; }
+.toast.show  { opacity:1; transform:none; }
+.toast.err   { background:var(--danger); color:#fff; }
+.toast.info  { background:var(--purple); color:#fff; }
+.toast.warn  { background:var(--warn);   color:#07080c; }
+
+/* ── RESPONSIVE SIDEBAR COLLAPSE ─────────────────────────────────── */
+@media(max-width:900px) {
+  /* Collapse sidebar to icon-only on tablets */
+  .side { width:56px; }
+  .side-top .side-owner,.side-top .side-role,.side-poll,
+  .side-nav .snav-sec,.nl span,.side-bot span,.side-logo em { display:none; }
+  .side-logo { font-size:11px; }
+  .nl { justify-content:center; padding:12px; }
+  .content { margin-left:56px; padding:16px; }
+  .stats { grid-template-columns:1fr 1fr; }
+  .branch-grid { grid-template-columns:1fr; }
+  .nl-badge { right:2px; font-size:9px; padding:1px 4px; }
+}
+@media(min-width:901px) and (max-width:1200px) {
+  .side { width:190px; }
+  .stats { grid-template-columns:repeat(3,1fr); }
+}
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     LOGIN SCREEN
+══════════════════════════════════════════════════════════════════ -->
+<div id="login">
+  <div class="lbox">
+    <div class="llogo">Green <em>Salon</em></div>
+    <div class="lsub">Owner & Admin Panel</div>
+    <div class="lver">FINAL VERSION</div>
+
+    <!-- API URL section — only shown if URL not yet saved -->
+    <div class="l-api-section" id="l-api-section">
+      <div class="l-api-title">⚙ First-time Setup</div>
+      <div class="l-api-hint">Paste your Apps Script <code>/exec</code> URL below. You only need to do this once.</div>
+      <input type="url" class="l-api-input" id="l-api-url"
+             placeholder="https://script.google.com/macros/s/AKf.../exec"
+             oninput="checkApiUrl()">
+    </div>
+
+    <label class="llbl">Admin Name</label>
+    <input type="text" class="linput" id="ladmin" placeholder="Harsha / Manager" value="Harsha">
+    <label class="llbl">Password</label>
+    <input type="password" class="linput" id="lpw" placeholder="Enter password"
+           onkeydown="if(event.key==='Enter')doLogin()">
+    <button class="lbtn" onclick="doLogin()">Login to Dashboard</button>
+    <div class="lerr" id="lerr"></div>
+    <div class="lfoot">one stop solutions - dlb</div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     APP SHELL
+══════════════════════════════════════════════════════════════════ -->
+<div id="app">
+<div class="layout">
+
+<!-- ── SIDEBAR ────────────────────────────────────────────────────── -->
+<div class="side">
+  <div class="side-top">
+    <div class="side-logo">Green <em>Salon</em></div>
+    <div class="side-owner" id="side-owner">Welcome</div>
+    <div class="side-role"  id="side-role">owner</div>
+    <!-- Shows auto-refresh status -->
+    <div class="side-poll"><div class="poll-dot"></div><span>Live refresh</span></div>
+  </div>
+  <div class="side-nav">
+    <div class="snav-sec">Overview</div>
+    <div class="nl on" id="nl-branches" onclick="nav('branches')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      <span>All Branches</span>
+    </div>
+
+    <!-- Branch-specific nav links (hidden until a branch is selected) -->
+    <div class="snav-sec" id="b-sec" style="display:none">Branch</div>
+    <div class="nl" id="nl-today"    style="display:none" onclick="loadToday();nav('today')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span>Today</span>
+    </div>
+    <div class="nl" id="nl-entries"  style="display:none" onclick="loadToday();nav('entries')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"/></svg><span>Entries</span>
+    </div>
+    <div class="nl" id="nl-monthly"  style="display:none" onclick="loadMonthly();nav('monthly')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><span>Monthly</span>
+    </div>
+    <div class="nl" id="nl-staff"    style="display:none" onclick="loadStaff();nav('staff')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg><span>Staff</span>
+    </div>
+    <div class="nl" id="nl-services" style="display:none" onclick="loadServices();nav('services')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 12h6M9 16h4"/></svg><span>Services</span>
+    </div>
+    <div class="nl" id="nl-products" style="display:none" onclick="loadProducts();nav('products')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a4 4 0 00-8 0v2"/></svg><span>Products</span>
+    </div>
+    <div class="nl" id="nl-reports"  style="display:none" onclick="loadReports();nav('reports')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      <span>Reports</span>
+      <!-- Red badge shows count of pending reports -->
+      <span class="nl-badge" id="reports-badge" style="display:none">0</span>
+    </div>
+    <div class="nl" id="nl-settings" style="display:none" onclick="loadSettings();nav('settings')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      <span>Settings</span>
+    </div>
+    <div class="nl" id="nl-adminlog" style="display:none" onclick="loadAdminLog();nav('adminlog')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span>Admin Log</span>
+    </div>
+  </div>
+  <div class="side-bot">
+    <div class="logout" onclick="logout()">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+      <span>Logout</span>
+    </div>
+  </div>
+</div>
+
+<!-- ── CONTENT ─────────────────────────────────────────────────────── -->
+<div class="content">
+
+<!-- ════════════════════════════════════════
+     PAGE: ALL BRANCHES
+════════════════════════════════════════ -->
+<div class="pg on" id="pg-branches">
+  <div class="ph">
+    <div>
+      <div class="ptitle">All Branches <div class="poll-dot" title="Auto-refreshing every 5s"></div></div>
+      <div class="psub" id="b-sub">Your salon network</div>
+    </div>
+    <!-- Master fix button: repairs all branch sheet structures in one click -->
+    <button class="btn btn-warn" onclick="masterFix()">🔧 Fix All Branches</button>
+  </div>
+  <!-- Active branch cards (populated by renderBranches) -->
+  <div class="branch-grid" id="branch-grid">
+    <div class="ld"><div class="sp"></div> Loading…</div>
+  </div>
+  <!-- Deleted branches section (hidden until there are deleted branches) -->
+  <div id="deleted-section" style="display:none;margin-top:24px">
+    <div style="font-family:'Syne',sans-serif;font-size:15px;font-weight:700;color:var(--muted);margin-bottom:12px">
+      🗑 Deleted Branches —
+      <span style="color:var(--txt);font-size:13px;font-weight:400">All data preserved. Click Recover to restore.</span>
+    </div>
+    <div class="branch-grid" id="deleted-grid"></div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════
+     PAGE: TODAY
+════════════════════════════════════════ -->
+<div class="pg" id="pg-today">
+  <div class="bc-nav">
+    <span class="bc-link" onclick="nav('branches')">All Branches</span>
+    <span class="bc-sep">›</span><span id="bc1"></span>
+    <span class="bc-sep">›</span><span>Today</span>
+  </div>
+  <div class="ph">
+    <div>
+      <div class="ptitle" id="today-title">Today <div class="poll-dot"></div></div>
+      <div class="psub" id="today-sub"></div>
+    </div>
+    <button class="btn btn-ghost" onclick="loadToday()">↻ Refresh</button>
+  </div>
+  <!-- 6 summary stat cards -->
+  <div class="stats">
+    <div class="sc"><div class="sc-lbl">Services</div><div class="sc-val g"  id="st-svc">₹—</div></div>
+    <div class="sc"><div class="sc-lbl">Products</div><div class="sc-val pr" id="st-prod">₹—</div></div>
+    <div class="sc"><div class="sc-lbl">Tips</div>    <div class="sc-val y"  id="st-tip">₹—</div></div>
+    <div class="sc"><div class="sc-lbl">Expenses</div><div class="sc-val r"  id="st-exp">₹—</div></div>
+    <div class="sc"><div class="sc-lbl">Entries</div> <div class="sc-val"    id="st-cnt">—</div></div>
+    <div class="sc"><div class="sc-lbl">Active Staff</div><div class="sc-val p" id="st-stf">—</div></div>
+  </div>
+  <!-- Per-staff performance table -->
+  <div class="card">
+    <div class="card-head"><div class="card-title">Staff Performance</div></div>
+    <div style="overflow-x:auto">
+      <table>
+        <thead><tr>
+          <th>Staff</th><th>Services</th><th>Revenue</th><th>Products</th><th>Tips</th><th>Total</th>
+        </tr></thead>
+        <tbody id="perf-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════
+     PAGE: ENTRIES (raw data tables)
+════════════════════════════════════════ -->
+<div class="pg" id="pg-entries">
+  <div class="bc-nav">
+    <span class="bc-link" onclick="nav('branches')">All Branches</span>
+    <span class="bc-sep">›</span><span id="bc2"></span>
+    <span class="bc-sep">›</span><span>Entries</span>
+  </div>
+  <div class="ph">
+    <div><div class="ptitle">Today's Entries</div><div class="psub">Removed = flagged in Sheet (data preserved)</div></div>
+    <button class="btn btn-ghost" onclick="loadToday()">↻ Refresh</button>
+  </div>
+  <!-- Services table -->
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-head"><div class="card-title">Services</div></div>
+    <div style="overflow-x:auto">
+      <table><thead><tr><th>Time</th><th>Staff</th><th>Service</th><th>Amt</th><th>Tip</th><th>Pay</th><th>Action</th></tr></thead>
+      <tbody id="ent-body"></tbody></table>
+    </div>
+  </div>
+  <!-- Product sales table -->
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-head"><div class="card-title" style="color:var(--product)">Product Sales</div></div>
+    <div style="overflow-x:auto">
+      <table><thead><tr><th>Time</th><th>Staff</th><th>Product</th><th>Amt</th><th>Pay</th><th>Action</th></tr></thead>
+      <tbody id="prod-body"></tbody></table>
+    </div>
+  </div>
+  <!-- Expenses table -->
+  <div class="card">
+    <div class="card-head"><div class="card-title" style="color:var(--danger)">Expenses</div></div>
+    <div style="overflow-x:auto">
+      <table><thead><tr><th>Time</th><th>Staff</th><th>Description</th><th>Amt</th><th>Pay</th><th>Action</th></tr></thead>
+      <tbody id="exp-body"></tbody></table>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════
+     PAGE: MONTHLY SUMMARY
+════════════════════════════════════════ -->
+<div class="pg" id="pg-monthly">
+  <div class="bc-nav">
+    <span class="bc-link" onclick="nav('branches')">All Branches</span>
+    <span class="bc-sep">›</span><span id="bc3"></span>
+    <span class="bc-sep">›</span><span id="month-lbl">Monthly</span>
+  </div>
+  <div class="ph">
+    <div>
+      <div class="ptitle" id="monthly-title">Monthly Summary</div>
+      <div class="psub">Per-staff daily totals — mirrors Google Sheet</div>
+    </div>
+    <button class="btn btn-ghost" onclick="loadMonthly()">↻ Refresh</button>
+  </div>
+  <div class="card" style="overflow-x:auto">
+    <table><thead><tr id="month-hdr"></tr></thead><tbody id="month-body"></tbody></table>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════
+     PAGE: STAFF MANAGEMENT
+════════════════════════════════════════ -->
+<div class="pg" id="pg-staff">
+  <div class="bc-nav">
+    <span class="bc-link" onclick="nav('branches')">All Branches</span>
+    <span class="bc-sep">›</span><span id="bc4"></span>
+    <span class="bc-sep">›</span><span>Staff</span>
+  </div>
+  <div class="ph"><div>
+    <div class="ptitle">Manage Staff</div>
+    <div class="psub">Edit · toggle commission · add · remove — syncs to tablet instantly</div>
+  </div></div>
+
+  <!-- Add new staff form -->
+  <div class="card" style="margin-bottom:18px">
+    <div class="card-head"><div class="card-title">Add New Staff Member</div></div>
+    <div class="card-body">
+      <div class="form-row">
+        <div class="field"><label>Full Name</label><input type="text"   id="ns-name" placeholder="e.g. Ali"></div>
+        <div class="field"><label>4-Digit PIN</label><input type="text" id="ns-pin"  placeholder="1234" maxlength="4" inputmode="numeric"></div>
+        <div class="field"><label>Commission %</label><input type="number" id="ns-comm" placeholder="40" min="0" max="100" value="40"></div>
+      </div>
+      <!-- Toggle: Commission enabled vs Fixed salary -->
+      <div class="tgl-row">
+        <div><div class="tgl-lbl">Commission Enabled</div><div class="tgl-sub">Toggle off for fixed-salary staff</div></div>
+        <div class="tgl on" id="ns-tgl" onclick="this.classList.toggle('on')"></div>
+      </div>
+      <button class="btn btn-acc" onclick="addStaff()" style="margin-top:12px">+ Add to Branch</button>
+    </div>
+  </div>
+
+  <!-- Current staff list -->
+  <div class="card">
+    <div class="card-head">
+      <div class="card-title">Current Staff</div>
+      <span style="font-size:12px;color:var(--muted)">✏ Edit · toggle commission · remove</span>
+    </div>
+    <div id="staff-list"><div class="ld"><div class="sp"></div></div></div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════
+     PAGE: SERVICES
+════════════════════════════════════════ -->
+<div class="pg" id="pg-services">
+  <div class="bc-nav">
+    <span class="bc-link" onclick="nav('branches')">All Branches</span>
+    <span class="bc-sep">›</span><span id="bc5"></span>
+    <span class="bc-sep">›</span><span>Services</span>
+  </div>
+  <div class="ph"><div><div class="ptitle">Service Menu</div><div class="psub">Services shown on tablet for this branch</div></div></div>
+  <div class="card" style="margin-bottom:18px">
+    <div class="card-head"><div class="card-title">Add Service</div></div>
+    <div class="card-body">
+      <div class="form-row">
+        <div class="field"><label>Service Name</label><input type="text"   id="new-sv-n" placeholder="e.g. Hot Towel Shave"></div>
+        <div class="field"><label>Price (₹)</label>   <input type="number" id="new-sv-p" placeholder="250"></div>
+      </div>
+      <button class="btn btn-acc" onclick="addSvc()">Add Service</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head">
+      <div class="card-title">Current Services</div>
+      <button class="btn btn-acc btn-sm" onclick="saveSvcs()">💾 Save to Sheet</button>
+    </div>
+    <div class="card-body"><div class="svc-tags" id="svc-tags"></div></div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════
+     PAGE: PRODUCTS
+════════════════════════════════════════ -->
+<div class="pg" id="pg-products">
+  <div class="bc-nav">
+    <span class="bc-link" onclick="nav('branches')">All Branches</span>
+    <span class="bc-sep">›</span><span id="bc6"></span>
+    <span class="bc-sep">›</span><span>Products</span>
+  </div>
+  <div class="ph"><div><div class="ptitle">Product Menu</div><div class="psub">Products staff can select when recording a sale</div></div></div>
+  <div class="card" style="margin-bottom:18px">
+    <div class="card-head"><div class="card-title">Add Product</div></div>
+    <div class="card-body">
+      <div class="form-row">
+        <div class="field"><label>Product Name</label><input type="text"   id="new-pd-n" placeholder="e.g. Argan Oil"></div>
+        <div class="field"><label>Price (₹)</label>   <input type="number" id="new-pd-p" placeholder="250"></div>
+      </div>
+      <button class="btn btn-acc" onclick="addProd()">Add Product</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head">
+      <div class="card-title">Current Products</div>
+      <button class="btn btn-acc btn-sm" onclick="saveProds()">💾 Save to Sheet</button>
+    </div>
+    <div class="card-body"><div class="svc-tags" id="prod-tags"></div></div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════
+     PAGE: REPORTS / COMPLAINTS
+════════════════════════════════════════ -->
+<div class="pg" id="pg-reports">
+  <div class="bc-nav">
+    <span class="bc-link" onclick="nav('branches')">All Branches</span>
+    <span class="bc-sep">›</span><span id="bc-rep"></span>
+    <span class="bc-sep">›</span><span>Reports</span>
+  </div>
+  <div class="ph">
+    <div><div class="ptitle">⚠ Reports / Complaints</div><div class="psub">Staff-reported issues — duplicate, wrong, custom</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <!-- Status filter dropdown -->
+      <select id="rep-filter" onchange="loadReports()"
+              style="padding:8px 12px;background:var(--s2);border:1px solid var(--b);border-radius:8px;color:var(--txt);font-size:13px;outline:none">
+        <option value="">All Reports</option>
+        <option value="Pending">Pending Only</option>
+        <option value="Resolved">Resolved Only</option>
+      </select>
+      <button class="btn btn-ghost" onclick="loadReports()">↻ Refresh</button>
+    </div>
+  </div>
+  <!-- Summary stats for reports -->
+  <div class="stats" style="margin-bottom:18px">
+    <div class="sc"><div class="sc-lbl">Total</div>      <div class="sc-val"    id="rep-total">—</div></div>
+    <div class="sc"><div class="sc-lbl">Pending</div>    <div class="sc-val r"  id="rep-pending">—</div></div>
+    <div class="sc"><div class="sc-lbl">Resolved</div>   <div class="sc-val g"  id="rep-resolved">—</div></div>
+    <div class="sc"><div class="sc-lbl">Duplicates</div> <div class="sc-val y"  id="rep-dup">—</div></div>
+    <div class="sc"><div class="sc-lbl">Mis-click</div>  <div class="sc-val p"  id="rep-mis">—</div></div>
+    <div class="sc"><div class="sc-lbl">Custom</div>     <div class="sc-val pr" id="rep-cus">—</div></div>
+  </div>
+  <div class="card">
+    <div class="card-head">
+      <div class="card-title">All Reports</div>
+      <span style="font-size:12px;color:var(--muted)">Click row to expand & take action</span>
+    </div>
+    <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Time</th><th>Staff</th><th>Type</th><th>Entry</th><th>Status</th><th>Action</th></tr></thead>
+        <tbody id="reports-body"><tr><td colspan="6"><div class="ld"><div class="sp"></div></div></td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════
+     PAGE: SETTINGS
+════════════════════════════════════════ -->
+<div class="pg" id="pg-settings">
+  <div class="bc-nav">
+    <span class="bc-link" onclick="nav('branches')">All Branches</span>
+    <span class="bc-sep">›</span><span id="bc7"></span>
+    <span class="bc-sep">›</span><span>Settings</span>
+  </div>
+  <div class="ph"><div><div class="ptitle">Branch Settings</div><div class="psub">Rename · emails · reports · maintenance</div></div></div>
+
+  <!-- API URL viewer -->
+  <div class="card" style="margin-bottom:18px">
+    <div class="card-head"><div class="card-title">⚙ API Configuration</div></div>
+    <div class="card-body">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Current Apps Script URL:</div>
+      <div style="background:var(--s2);border:1px solid var(--b);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--acc);word-break:break-all" id="settings-api-url">—</div>
+      <button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="resetApiUrl()">Change URL</button>
+    </div>
+  </div>
+
+  <!-- Rename branch -->
+  <div class="card" style="margin-bottom:18px">
+    <div class="card-head"><div class="card-title">Rename Branch</div></div>
+    <div class="card-body">
+      <div class="rename-row">
+        <input type="text" id="rename-val" placeholder="New branch name…">
+        <button class="btn btn-acc" onclick="renameBranch()">Rename</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Email addresses for reports -->
+  <div class="card" style="margin-bottom:18px">
+    <div class="card-head"><div class="card-title">Email Addresses</div><span style="font-size:12px;color:var(--muted)">Up to 3 recipients</span></div>
+    <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
+      <div class="email-box">
+        <span style="font-size:11px;color:var(--muted);white-space:nowrap">Email 1</span>
+        <input type="email" id="email1" placeholder="owner@example.com">
+      </div>
+      <div class="email-box">
+        <span style="font-size:11px;color:var(--muted);white-space:nowrap">Email 2</span>
+        <input type="email" id="email2" placeholder="manager@example.com">
+      </div>
+      <div class="email-box">
+        <span style="font-size:11px;color:var(--muted);white-space:nowrap">Email 3</span>
+        <input type="email" id="email3" placeholder="accountant@example.com">
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
+        <button class="btn btn-acc" onclick="saveEmails()">💾 Save Emails</button>
+        <button class="btn btn-ghost" onclick="sendReport('daily')">📤 Send Daily Now</button>
+        <button class="btn btn-ghost" onclick="sendReport('monthly')">📊 Send Monthly Now</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Branch maintenance: fix structure + fix all -->
+  <div class="card">
+    <div class="card-head"><div class="card-title">🔧 Maintenance</div></div>
+    <div class="card-body">
+      <div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.6">
+        Use these tools if sheets have missing columns, wrong headers, or missing tabs.
+        Safe to run at any time — no data is deleted.
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <!-- Fix only the current branch -->
+        <button class="btn btn-warn" onclick="fixBranch()">🔧 Fix This Branch</button>
+        <!-- Fix all branches at once -->
+        <button class="btn btn-warn" onclick="masterFix()">🔧 Fix All Branches</button>
+      </div>
+      <!-- Shows results of fix operation -->
+      <div id="fix-result" style="margin-top:14px;font-size:12px;color:var(--muted);display:none"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════
+     PAGE: ADMIN LOG (audit trail)
+════════════════════════════════════════ -->
+<div class="pg" id="pg-adminlog">
+  <div class="ph">
+    <div><div class="ptitle">Admin Audit Log</div><div class="psub">All admin actions — immutable record</div></div>
+    <button class="btn btn-ghost" onclick="loadAdminLog()">↻ Refresh</button>
+  </div>
+  <div class="card">
+    <div id="adminlog-body"><div class="ld"><div class="sp"></div></div></div>
+  </div>
+</div>
+
+</div><!-- end .content -->
+</div><!-- end .layout -->
+</div><!-- end #app -->
+
+<!-- Toast notification -->
+<div class="toast" id="toast"></div>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     JAVASCRIPT
+══════════════════════════════════════════════════════════════════ -->
+<script>
+// ── STATE ────────────────────────────────────────────────────────
+const S = {
+  apiUrl:      "",     // Apps Script /exec URL
+  adminId:     "",     // Logged-in admin ID
+  adminName:   "",     // Logged-in admin display name
+  role:        "",     // "owner" or "manager"
+  branchId:    "",     // Currently selected branch
+  branchName:  "",     // Currently selected branch display name
+  branches:    [],     // All active branches array
+  svcList:     [],     // Services list for current branch (local state for editing)
+  prodList:    [],     // Products list for current branch (local state for editing)
+  pollTimer:   null,   // setInterval handle for 5s auto-refresh
+  todayData:   null,   // Cached getTodayAll response
+};
+
+// ── TOAST ─────────────────────────────────────────────────────────
+let toastT = null;
+function toast(msg, type = "ok", dur = 3000) {
+  // type: "ok" = green, "err" = red, "info" = purple, "warn" = amber
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.className   = "toast show" + (type === "err" ? " err" : type === "info" ? " info" : type === "warn" ? " warn" : "");
+  clearTimeout(toastT);
+  toastT = setTimeout(() => el.classList.remove("show"), dur);
+}
+
+// ── FORMAT HELPERS ────────────────────────────────────────────────
+// Indian number format: 12500 → "12,500"
+function fmt(n) { return Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 }); }
+// Format payment mode as badge HTML
+function payBadge(p) {
+  const c = p === "Cash" ? "bc" : p === "UPI" ? "bu" : "bo";
+  return `<span class="badge ${c}">${p}</span>`;
+}
+// Format date string for display
+function fmtDate(ts) { return String(ts || "").split(" ")[0] || "—"; }
+
+// ── API HELPER ─────────────────────────────────────────────────────
+// All POST calls go through here. Adds adminId/adminName to every request.
+async function api(action, data = {}) {
+  const res = await fetch(S.apiUrl, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify({ action, adminId: S.adminId, adminName: S.adminName, ...data }),
+  });
+  return res.json();
+}
+
+// ── API URL MANAGEMENT ─────────────────────────────────────────────
+// Checks if URL is saved in localStorage; shows/hides the setup section on login page
+function checkApiUrl() {
+  const val = document.getElementById("l-api-url")?.value?.trim();
+  if (val) localStorage.setItem("gs_owner_api_url", val);
+}
+function resetApiUrl() {
+  localStorage.removeItem("gs_owner_api_url");
+  logout();
+}
+function loadApiUrlInLogin() {
+  const saved = localStorage.getItem("gs_owner_api_url");
+  const section = document.getElementById("l-api-section");
+  if (saved) {
+    S.apiUrl = saved;
+    section.style.display = "none"; // hide setup section if already configured
+  } else {
+    section.style.display = "block";
+  }
+}
+
+// ── LOGIN ─────────────────────────────────────────────────────────
+async function doLogin() {
+  // Get URL from input or localStorage
+  const urlInput = document.getElementById("l-api-url")?.value?.trim();
+  if (urlInput) localStorage.setItem("gs_owner_api_url", urlInput);
+  const url = localStorage.getItem("gs_owner_api_url");
+  if (!url) { document.getElementById("lerr").textContent = "⚠ Enter Apps Script URL first"; return; }
+
+  S.apiUrl = url;
+  const name = document.getElementById("ladmin").value.trim();
+  const pw   = document.getElementById("lpw").value;
+  if (!name || !pw) { document.getElementById("lerr").textContent = "Enter name and password"; return; }
+
+  document.getElementById("lerr").textContent = "⏳ Logging in…";
+  try {
+    // adminLogin supports multiple admins; ownerLogin is for the single owner
+    const res = await api("adminLogin", { name, password: pw });
+    if (!res.success) throw new Error(res.error);
+    // Store session in localStorage so page refresh keeps you logged in
+    S.adminId   = res.adminId;
+    S.adminName = res.adminName;
+    S.role      = res.role;
+    localStorage.setItem("gs_owner_session", JSON.stringify({ adminId: S.adminId, adminName: S.adminName, role: S.role }));
+    onLoginSuccess();
+  } catch (ex) {
+    document.getElementById("lerr").textContent = "❌ " + ex.message;
+  }
+}
+
+// onLoginSuccess() — transitions from login screen to app shell
+function onLoginSuccess() {
+  document.getElementById("login").style.display = "none";
+  document.getElementById("app").style.display   = "block";
+  document.getElementById("side-owner").textContent = S.adminName;
+  document.getElementById("side-role").textContent  = S.role;
+  document.getElementById("settings-api-url").textContent = S.apiUrl;
+  loadBranches(); // fetch and render all branches
+  startAutoRefresh(); // begin 5-second polling
+}
+
+// logout() — clears session and returns to login screen
+function logout() {
+  localStorage.removeItem("gs_owner_session");
+  S.adminId = S.adminName = S.role = S.branchId = S.branchName = "";
+  if (S.pollTimer) clearInterval(S.pollTimer);
+  document.getElementById("app").style.display   = "none";
+  document.getElementById("login").style.display = "flex";
+  document.getElementById("lpw").value = "";
+  document.getElementById("lerr").textContent = "";
+}
+
+// ── AUTO-REFRESH ──────────────────────────────────────────────────
+// Refreshes the current page's data every 5 seconds
+function startAutoRefresh() {
+  if (S.pollTimer) clearInterval(S.pollTimer);
+  S.pollTimer = setInterval(refreshCurrentPage, 5000);
+}
+
+// Determines which page is active and re-fetches its data
+function refreshCurrentPage() {
+  const active = document.querySelector(".pg.on")?.id;
+  if (active === "pg-branches") loadBranches();
+  else if (active === "pg-today")   loadToday();
+  else if (active === "pg-entries") loadToday(); // entries uses same getTodayAll data
+}
+
+// ── NAVIGATION ────────────────────────────────────────────────────
+// Shows a page by ID, hides all others
+function nav(page) {
+  document.querySelectorAll(".pg").forEach(p => p.classList.remove("on"));
+  document.getElementById("pg-" + page).classList.add("on");
+  // Highlight active sidebar nav link
+  document.querySelectorAll(".nl").forEach(n => n.classList.remove("on"));
+  document.getElementById("nl-" + page)?.classList.add("on");
+}
+
+// ── BRANCHES ──────────────────────────────────────────────────────
+async function loadBranches() {
+  const res = await api("getBranches");
+  if (!res.success) return;
+  S.branches = res.branches || [];
+  renderBranches(res.branches || [], res.deleted || []);
+  document.getElementById("b-sub").textContent =
+    `${(res.branches||[]).length} active branch${(res.branches||[]).length !== 1 ? "es" : ""}`;
+  // Silently check pending reports badge for active branch
+  if (S.branchId) checkReportsBadge();
+}
+
+// renderBranches() — renders branch cards with live summary stats
+async function renderBranches(branches, deleted) {
+  const grid = document.getElementById("branch-grid");
+  if (!branches.length) {
+    grid.innerHTML = '<div class="ld" style="color:var(--muted)">No branches found. Run firstTimeSetup() in Apps Script.</div>';
+    return;
+  }
+  // Fetch today's summary for each branch in parallel
+  const summaries = await Promise.all(branches.map(b =>
+    api("getBranchSummary", { branchId: b.id }).catch(() => ({}))
+  ));
+
+  grid.innerHTML = branches.map((b, i) => {
+    const sm = summaries[i] || {};
+    return `
+      <div class="bcard bcard-click" onclick="selectBranch('${b.id}','${b.name}')">
+        <div class="bcard-name">${b.name}</div>
+        <div class="bcard-loc">📍 ${b.location || "—"}</div>
+        <div class="bcard-stats">
+          <div class="bcs"><div class="bcs-lbl">Revenue</div><div class="bcs-val">₹${fmt(sm.totalRevenue||0)}</div></div>
+          <div class="bcs"><div class="bcs-lbl">Entries</div><div class="bcs-val">${sm.totalEntries||0}</div></div>
+        </div>
+        <div class="bcard-actions">
+          <button class="btn btn-acc btn-sm" onclick="event.stopPropagation();selectBranch('${b.id}','${b.name}');loadToday();nav('today')">📊 Today</button>
+          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();selectBranch('${b.id}','${b.name}');loadMonthly();nav('monthly')">📅 Monthly</button>
+        </div>
+        <div class="bcard-foot">
+          <span style="color:var(--muted)">${b.id}</span>
+          <span class="copy-id" onclick="event.stopPropagation();navigator.clipboard.writeText('${b.id}');toast('ID copied')">Copy ID</span>
+        </div>
+      </div>`;
+  }).join("");
+
+  // Render deleted branches section
+  const delSec  = document.getElementById("deleted-section");
+  const delGrid = document.getElementById("deleted-grid");
+  if (deleted.length) {
+    delSec.style.display = "block";
+    delGrid.innerHTML = deleted.map(b => `
+      <div class="bcard bcard-deleted">
+        <div class="deleted-tag">Deleted</div>
+        <div class="bcard-name">${b.name}</div>
+        <div class="bcard-loc">Deleted: ${b.deletedAt || "—"}</div>
+        <div class="bcard-actions">
+          <button class="btn btn-recover btn-sm" onclick="recoverBranch('${b.id}','${b.name}')">Recover</button>
+        </div>
+      </div>`).join("");
+  } else {
+    delSec.style.display = "none";
+  }
+}
+
+// selectBranch() — sets the active branch and shows branch-specific nav links
+function selectBranch(id, name) {
+  S.branchId   = id;
+  S.branchName = name;
+  // Show branch-specific nav items
+  ["b-sec","nl-today","nl-entries","nl-monthly","nl-staff",
+   "nl-services","nl-products","nl-reports","nl-settings","nl-adminlog"]
+    .forEach(id => document.getElementById(id).style.display = "");
+  // Update all breadcrumb spans
+  ["bc1","bc2","bc3","bc4","bc5","bc6","bc-rep","bc7"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = name;
+  });
+  document.getElementById("today-title").innerHTML = `${name} <div class="poll-dot"></div>`;
+  document.getElementById("today-sub").textContent = new Date().toLocaleDateString("en-IN", { weekday:"long", day:"numeric", month:"long", year:"numeric" });
+  document.getElementById("monthly-title").textContent = name + " — Monthly";
+}
+
+// recoverBranch() — restores a soft-deleted branch
+async function recoverBranch(id, name) {
+  if (!confirm(`Recover branch "${name}"?`)) return;
+  const res = await api("recoverBranch", { branchId: id });
+  if (!res.success) { toast(res.error, "err"); return; }
+  toast(`✓ ${name} recovered`);
+  loadBranches();
+}
+
+// ── TODAY PAGE ─────────────────────────────────────────────────────
+async function loadToday() {
+  if (!S.branchId) return;
+  try {
+    const res = await api("getTodayAll", { branchId: S.branchId });
+    if (!res.success) throw new Error(res.error);
+    S.todayData = res; // cache for Entries page
+
+    // Compute aggregate totals from response
+    const svcTotal  = (res.entries     || []).filter(e => !e.flagged).reduce((s,e) => s + Number(e.amount||0), 0);
+    const tipTotal  = (res.entries     || []).filter(e => !e.flagged).reduce((s,e) => s + Number(e.tip||0),    0);
+    const prodTotal = res.totalProductRevenue || 0;
+    const expTotal  = res.totalExp || 0;
+
+    // Count unique active staff who have submitted at least one entry
+    const activeStaff = new Set((res.entries||[]).filter(e=>!e.flagged).map(e=>e.staffName)).size;
+
+    document.getElementById("st-svc").textContent  = "₹" + fmt(svcTotal);
+    document.getElementById("st-prod").textContent = "₹" + fmt(prodTotal);
+    document.getElementById("st-tip").textContent  = "₹" + fmt(tipTotal);
+    document.getElementById("st-exp").textContent  = "₹" + fmt(expTotal);
+    document.getElementById("st-cnt").textContent  = (res.entries||[]).filter(e=>!e.flagged).length;
+    document.getElementById("st-stf").textContent  = activeStaff;
+
+    // Render staff performance table
+    const perf = res.staffTotals || [];
+    document.getElementById("perf-body").innerHTML = perf.length
+      ? perf.map(st => `
+          <tr>
+            <td><strong>${st.name}</strong></td>
+            <td>${st.entries}</td>
+            <td>₹${fmt(st.totalAmount)}</td>
+            <td>₹${fmt(st.products)}</td>
+            <td style="color:var(--warn)">₹${fmt(st.totalTip)}</td>
+            <td><strong>₹${fmt((st.totalAmount||0)+(st.products||0))}</strong></td>
+          </tr>`)
+        .join("")
+      : '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">No entries yet today</td></tr>';
+
+    // Also render Entries page tables (same data)
+    renderEntryTables(res);
+  } catch (ex) {
+    toast("Load error: " + ex.message, "err");
+  }
+}
+
+// renderEntryTables() — renders the 3 raw data tables on the Entries page
+function renderEntryTables(res) {
+  // ── Services table
+  const entries = res.entries || [];
+  document.getElementById("ent-body").innerHTML = entries.length
+    ? entries.map(e => `
+        <tr class="${e.flagged ? 'flagged' : ''}">
+          <td style="font-size:11px;color:var(--muted)">${fmtDate(e.timestamp)}</td>
+          <td>${e.staffName}</td>
+          <td>${e.service}</td>
+          <td>₹${fmt(e.amount)}</td>
+          <td>${e.tip > 0 ? '₹'+fmt(e.tip) : '—'}</td>
+          <td>${payBadge(e.paymentMethod)}</td>
+          <td>
+            ${!e.flagged
+              ? `<button class="btn btn-danger btn-sm" onclick="flagEntry('${e.rowId}','entry')">Remove</button>`
+              : '<span style="font-size:11px;color:var(--muted)">Removed</span>'}
+          </td>
+        </tr>`)
+      .join("")
+    : '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px">No service entries today</td></tr>';
+
+  // ── Products table
+  const prods = res.productSales || [];
+  document.getElementById("prod-body").innerHTML = prods.length
+    ? prods.map(p => `
+        <tr class="${p.flagged ? 'flagged' : ''}">
+          <td style="font-size:11px;color:var(--muted)">${fmtDate(p.timestamp)}</td>
+          <td>${p.staffName}</td>
+          <td>${p.product}</td>
+          <td>₹${fmt(p.amount)}</td>
+          <td>${payBadge(p.paymentMethod)}</td>
+          <td>
+            ${!p.flagged
+              ? `<button class="btn btn-danger btn-sm" onclick="flagEntry('${p.rowId}','product')">Remove</button>`
+              : '<span style="font-size:11px;color:var(--muted)">Removed</span>'}
+          </td>
+        </tr>`)
+      .join("")
+    : '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px">No product sales today</td></tr>';
+
+  // ── Expenses table
+  const exps = res.expenses || [];
+  document.getElementById("exp-body").innerHTML = exps.length
+    ? exps.map(x => `
+        <tr class="${x.flagged ? 'flagged' : ''}">
+          <td style="font-size:11px;color:var(--muted)">${fmtDate(x.timestamp)}</td>
+          <td>${x.staffName}</td>
+          <td>${x.description}</td>
+          <td>₹${fmt(x.amount)}</td>
+          <td>${payBadge(x.paymentMethod)}</td>
+          <td>
+            ${!x.flagged
+              ? `<button class="btn btn-danger btn-sm" onclick="flagEntry('${x.rowId}','expense')">Remove</button>`
+              : '<span style="font-size:11px;color:var(--muted)">Removed</span>'}
+          </td>
+        </tr>`)
+      .join("")
+    : '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px">No expenses today</td></tr>';
+}
+
+// flagEntry() — soft-deletes an entry (sets Flagged=true in sheet)
+async function flagEntry(rowId, type) {
+  if (!confirm("Remove this entry? (Data is preserved in Sheet, just hidden)")) return;
+  const actionMap = { entry:"deleteEntry", product:"deleteProduct", expense:"deleteExpense" };
+  const res = await api(actionMap[type], { branchId: S.branchId, rowId });
+  if (!res.success) { toast(res.error, "err"); return; }
+  toast("✓ Entry removed (flagged)");
+  loadToday(); // refresh tables
+}
+
+// ── MONTHLY ────────────────────────────────────────────────────────
+async function loadMonthly() {
+  if (!S.branchId) return;
+  const res = await api("getMonthSummary", { branchId: S.branchId });
+  if (!res.success) { toast(res.error, "err"); return; }
+  document.getElementById("month-lbl").textContent = res.month || "Monthly";
+
+  const summary = res.summary || [];
+  if (!summary.length) {
+    document.getElementById("month-hdr").innerHTML  = '<th>No data yet</th>';
+    document.getElementById("month-body").innerHTML = '';
+    return;
+  }
+
+  // Build dynamic column headers from the first row's keys
+  const keys = Object.keys(summary[0]);
+  document.getElementById("month-hdr").innerHTML = keys.map(k =>
+    `<th>${k}</th>`).join("");
+
+  // Color code specific columns
+  const colorMap = { Date:"var(--txt)", Total:"var(--acc)", Product:"var(--product)",
+    Commission:"var(--warn)", Expenses:"var(--danger)", Online:"var(--online)", Cash:"var(--cash)", Difference:"var(--purple)" };
+
+  document.getElementById("month-body").innerHTML = summary.map(row => {
+    const isTotalRow = String(row["Date"]) === "TOTAL";
+    const rowStyle = isTotalRow ? 'style="font-weight:700;background:rgba(34,211,168,.06)"' : '';
+    const cells = keys.map(k => {
+      const val   = row[k];
+      const color = colorMap[k] || "var(--txt)";
+      const disp  = (k !== "Date" && k !== "month" && val !== "" && val !== 0)
+        ? `<span style="color:${color}">₹${fmt(val)}</span>`
+        : String(val || "—");
+      return `<td>${disp}</td>`;
+    }).join("");
+    return `<tr ${rowStyle}>${cells}</tr>`;
+  }).join("");
+}
+
+// ── STAFF ──────────────────────────────────────────────────────────
+async function loadStaff() {
+  if (!S.branchId) return;
+  document.getElementById("staff-list").innerHTML = '<div class="ld"><div class="sp"></div></div>';
+  const res = await api("getStaffAdmin", { branchId: S.branchId });
+  if (!res.success) { toast(res.error, "err"); return; }
+  renderStaffList(res.staff || []);
+}
+
+// renderStaffList() — renders editable staff rows
+function renderStaffList(staff) {
+  const list = document.getElementById("staff-list");
+  if (!staff.length) {
+    list.innerHTML = '<div class="ld" style="color:var(--muted)">No staff yet. Add above.</div>';
+    return;
+  }
+  list.innerHTML = staff.map(s => {
+    const initials = s.name.split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
+    const hasComm  = s.hasCommission === true || String(s.hasCommission) === "TRUE";
+    return `
+      <div class="staff-row" id="srow-${s.id}">
+        <div class="sav">${initials}</div>
+        <!-- Display mode (editable on pencil click) -->
+        <div class="sinfo" id="sinfo-${s.id}">
+          <div class="sname">${s.name}</div>
+          <div class="smeta">PIN: ${s.pin} · Commission: ${hasComm ? s.commissionPct+'%' : 'Fixed'}</div>
+        </div>
+        <!-- Inline edit mode (hidden by default) -->
+        <div class="sname-edit" id="sedit-${s.id}">
+          <input class="sname-input" id="sinput-${s.id}" value="${s.name}" onkeydown="if(event.key==='Enter')saveRename('${s.id}')">
+        </div>
+        <div class="sactions">
+          <!-- Commission % input and toggle -->
+          <div class="comm-tgl">
+            <input class="comm-input" id="scomm-${s.id}" type="number" value="${s.commissionPct}" min="0" max="100" title="Commission %">
+            <span style="font-size:11px;color:var(--muted)">%</span>
+            <div class="tgl tgl-sm ${hasComm?'on':''}" id="stgl-${s.id}" onclick="toggleComm('${s.id}')"></div>
+          </div>
+          <!-- Save commission changes -->
+          <button class="btn btn-ghost btn-sm" onclick="saveComm('${s.id}')">Save</button>
+          <!-- Toggle inline rename editor -->
+          <button class="btn btn-purple btn-sm" id="sbtn-edit-${s.id}" onclick="toggleRename('${s.id}')">✏</button>
+          <!-- Save rename -->
+          <button class="btn btn-acc btn-sm" id="sbtn-save-${s.id}" style="display:none" onclick="saveRename('${s.id}')">✓</button>
+          <!-- Remove staff (soft-delete) -->
+          <button class="btn btn-danger btn-sm" onclick="removeStaff('${s.id}','${s.name}')">×</button>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+// toggleRename() — shows/hides the inline name edit input for a staff member
+function toggleRename(id) {
+  const info  = document.getElementById("sinfo-" + id);
+  const edit  = document.getElementById("sedit-" + id);
+  const btnE  = document.getElementById("sbtn-edit-" + id);
+  const btnS  = document.getElementById("sbtn-save-" + id);
+  const isOpen = edit.style.display === "flex";
+  info.style.display  = isOpen ? "block" : "none";
+  edit.style.display  = isOpen ? "none"  : "flex";
+  btnE.style.display  = isOpen ? ""      : "none";
+  btnS.style.display  = isOpen ? "none"  : "";
+  if (!isOpen) document.getElementById("sinput-" + id).focus();
+}
+
+// toggleComm() — flips commission enabled/disabled for a staff member
+function toggleComm(id) {
+  document.getElementById("stgl-" + id).classList.toggle("on");
+}
+
+// saveComm() — saves commission % and enabled/disabled to sheet
+async function saveComm(id) {
+  const pct = Number(document.getElementById("scomm-" + id).value) || 0;
+  const has = document.getElementById("stgl-" + id).classList.contains("on");
+  const res = await api("updateStaffComm", { branchId: S.branchId, staffId: id, commissionPct: pct, hasCommission: has });
+  if (!res.success) { toast(res.error, "err"); return; }
+  toast("✓ Commission updated");
+  loadStaff();
+}
+
+// saveRename() — sends rename request to API, refreshes staff list
+async function saveRename(id) {
+  const newName = document.getElementById("sinput-" + id).value.trim();
+  if (!newName) { toast("Name cannot be empty", "err"); return; }
+  const res = await api("renameStaff", { branchId: S.branchId, staffId: id, newName });
+  if (!res.success) { toast(res.error, "err"); return; }
+  toast(`✓ Renamed to ${newName}`);
+  // Re-render with updated list (v12 fix: also updates Daily/Monthly column headers)
+  renderStaffList(res.staff || []);
+}
+
+// addStaff() — reads form fields and creates new staff member
+async function addStaff() {
+  const name  = document.getElementById("ns-name").value.trim();
+  const pin   = document.getElementById("ns-pin").value.trim()  || "0000";
+  const comm  = Number(document.getElementById("ns-comm").value) || 40;
+  const hasc  = document.getElementById("ns-tgl").classList.contains("on");
+  if (!name) { toast("Enter staff name", "err"); return; }
+  const res = await api("addStaff", { branchId: S.branchId, name, pin, commissionPct: comm, hasCommission: hasc });
+  if (!res.success) { toast(res.error, "err"); return; }
+  toast("✓ " + name + " added");
+  document.getElementById("ns-name").value = "";
+  document.getElementById("ns-pin").value  = "";
+  // v12 fix: API returns updated staff list — render immediately without extra fetch
+  renderStaffList(res.staff || []);
+}
+
+// removeStaff() — soft-deletes a staff member (sets Active=false)
+async function removeStaff(id, name) {
+  if (!confirm(`Remove ${name}? Their past entries are preserved.`)) return;
+  const res = await api("removeStaff", { branchId: S.branchId, staffId: id });
+  if (!res.success) { toast(res.error, "err"); return; }
+  toast("✓ " + name + " removed");
+  renderStaffList(res.staff || []);
+}
+
+// ── SERVICES ───────────────────────────────────────────────────────
+async function loadServices() {
+  if (!S.branchId) return;
+  const res = await fetch(`${S.apiUrl}?action=getServices&branchId=${S.branchId}`).then(r=>r.json());
+  if (!res.success) { toast(res.error, "err"); return; }
+  S.svcList = res.services || [];
+  renderSvcTags();
+}
+
+// renderSvcTags() — renders current services as removable chip tags
+function renderSvcTags() {
+  const el = document.getElementById("svc-tags");
+  if (!S.svcList.length) { el.innerHTML = '<span style="color:var(--muted);font-size:13px">No services yet.</span>'; return; }
+  el.innerHTML = S.svcList.map((s,i) =>
+    `<span class="stag">${s.name} — ₹${s.price}<span class="rm" onclick="removeSvc(${i})">×</span></span>`
+  ).join("");
+}
+
+// addSvc() — adds a service to local list (not yet saved to sheet)
+function addSvc() {
+  const n = document.getElementById("new-sv-n").value.trim();
+  const p = Number(document.getElementById("new-sv-p").value) || 0;
+  if (!n) { toast("Enter service name", "err"); return; }
+  S.svcList.push({ name: n, price: p });
+  document.getElementById("new-sv-n").value = "";
+  document.getElementById("new-sv-p").value = "";
+  renderSvcTags();
+}
+
+// removeSvc() — removes from local list (not yet saved)
+function removeSvc(i) { S.svcList.splice(i,1); renderSvcTags(); }
+
+// saveSvcs() — saves entire local list to Google Sheet
+async function saveSvcs() {
+  const res = await api("updateServices", { branchId: S.branchId, services: S.svcList });
+  if (!res.success) { toast(res.error, "err"); return; }
+  toast("✓ Services saved to Sheet");
+}
+
+// ── PRODUCTS ───────────────────────────────────────────────────────
+async function loadProducts() {
+  if (!S.branchId) return;
+  const res = await fetch(`${S.apiUrl}?action=getProducts&branchId=${S.branchId}`).then(r=>r.json());
+  if (!res.success) { toast(res.error, "err"); return; }
+  S.prodList = res.products || [];
+  renderProdTags();
+}
+function renderProdTags() {
+  const el = document.getElementById("prod-tags");
+  if (!S.prodList.length) { el.innerHTML = '<span style="color:var(--muted);font-size:13px">No products yet.</span>'; return; }
+  el.innerHTML = S.prodList.map((p,i) =>
+    `<span class="stag">${p.name} — ₹${p.price}<span class="rm" onclick="removeProd(${i})">×</span></span>`
+  ).join("");
+}
+function addProd() {
+  const n = document.getElementById("new-pd-n").value.trim();
+  const p = Number(document.getElementById("new-pd-p").value) || 0;
+  if (!n) { toast("Enter product name", "err"); return; }
+  S.prodList.push({ name: n, price: p });
+  document.getElementById("new-pd-n").value = "";
+  document.getElementById("new-pd-p").value = "";
+  renderProdTags();
+}
+function removeProd(i) { S.prodList.splice(i,1); renderProdTags(); }
+async function saveProds() {
+  const res = await api("updateProducts", { branchId: S.branchId, products: S.prodList });
+  if (!res.success) { toast(res.error, "err"); return; }
+  toast("✓ Products saved to Sheet");
+}
+
+// ── REPORTS ────────────────────────────────────────────────────────
+async function loadReports() {
+  if (!S.branchId) return;
+  const statusFilter = document.getElementById("rep-filter")?.value || "";
+  const res = await api("getReports", { branchId: S.branchId, status: statusFilter });
+  if (!res.success) { toast(res.error, "err"); return; }
+
+  const reports = res.reports || [];
+  // Compute stats
+  const pending  = reports.filter(r => r.Status === "Pending").length;
+  const resolved = reports.filter(r => String(r.Status||"").startsWith("Resolved")).length;
+  const dup      = reports.filter(r => r.ReportType === "duplicate").length;
+  const mis      = reports.filter(r => r.ReportType === "mis-click").length;
+  const cus      = reports.filter(r => r.ReportType === "custom").length;
+
+  document.getElementById("rep-total").textContent   = reports.length;
+  document.getElementById("rep-pending").textContent  = pending;
+  document.getElementById("rep-resolved").textContent = resolved;
+  document.getElementById("rep-dup").textContent      = dup;
+  document.getElementById("rep-mis").textContent      = mis;
+  document.getElementById("rep-cus").textContent      = cus;
+
+  // Update sidebar badge
+  const badge = document.getElementById("reports-badge");
+  badge.style.display = pending > 0 ? "inline" : "none";
+  badge.textContent   = pending;
+
+  if (!reports.length) {
+    document.getElementById("reports-body").innerHTML =
+      '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">No reports found</td></tr>';
+    return;
+  }
+
+  // Render each report as a row with expandable detail section
+  document.getElementById("reports-body").innerHTML = reports.map(r => {
+    const typeClass = r.ReportType === "duplicate" ? "dup" : r.ReportType === "mis-click" ? "mis" : "cus";
+    const typeBadge = `<span class="badge rt-${typeClass}">${r.ReportType}</span>`;
+    const stClass   = String(r.Status||"").startsWith("Resolved") ? "st-res" : r.Status === "Ignored" ? "st-ign" : "st-pend";
+    const isPending = r.Status === "Pending";
+    return `
+      <tr class="report-row ${typeClass}" onclick="toggleReportDetail('${r.ReportID}')">
+        <td style="font-size:11px;color:var(--muted)">${fmtDate(r.Timestamp)}</td>
+        <td>${r.StaffName}</td>
+        <td>${typeBadge}</td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.EntryDetails||'—'}</td>
+        <td><span class="badge ${stClass}">${r.Status}</span></td>
+        <td>${isPending ? `<button class="btn btn-acc btn-sm" onclick="event.stopPropagation();quickResolve('${r.ReportID}')">Resolve</button>` : '—'}</td>
+      </tr>
+      <!-- Expandable detail row (hidden by default) -->
+      <tr><td colspan="6" style="padding:0">
+        <div class="report-detail" id="rd-${r.ReportID}">
+          <strong>Message:</strong> ${r.Message || '(no message)'}<br>
+          <strong>Entry Row ID:</strong> ${r.EntryRowID || '—'}<br>
+          <strong>Corrected Value:</strong> ${r.CorrectedValue || '—'}<br>
+          <strong>Resolved By:</strong> ${r.ResolvedBy || '—'} at ${r.ResolvedAt || '—'}
+          ${isPending ? `
+          <div class="resolve-acts">
+            <button class="btn btn-danger btn-sm"  onclick="resolveReport('${r.ReportID}','delete_entry')">🗑 Delete Entry</button>
+            <button class="btn btn-acc btn-sm"     onclick="resolveReport('${r.ReportID}','mark_valid')">✓ Mark Valid</button>
+            <button class="btn btn-purple btn-sm"  onclick="resolveReport('${r.ReportID}','corrected')">✏ Corrected</button>
+            <button class="btn btn-ghost btn-sm"   onclick="resolveReport('${r.ReportID}','ignored')">Ignore</button>
+          </div>` : ''}
+        </div>
+      </td></tr>`;
+  }).join("");
+}
+
+// toggleReportDetail() — expands/collapses the detail row for a report
+function toggleReportDetail(id) {
+  const el = document.getElementById("rd-" + id);
+  if (el) el.classList.toggle("open");
+}
+
+// quickResolve() — marks a report as "mark_valid" directly from the action button
+async function quickResolve(reportId) {
+  await resolveReport(reportId, "mark_valid");
+}
+
+// resolveReport() — sends resolve action to API
+async function resolveReport(reportId, action) {
+  const note = action === "delete_entry" ? "Owner deleted entry" :
+               action === "mark_valid"   ? "Verified valid entry" :
+               action === "corrected"    ? "Entry corrected" : "Ignored";
+  const res = await api("resolveReport", { branchId: S.branchId, reportId, action, note });
+  if (!res.success) { toast(res.error, "err"); return; }
+  toast("✓ Report " + action.replace("_"," "));
+  loadReports();
+}
+
+// checkReportsBadge() — silently checks pending report count and updates badge
+async function checkReportsBadge() {
+  try {
+    const res = await api("getReports", { branchId: S.branchId, status: "Pending" });
+    if (!res.success) return;
+    const count = (res.reports || []).length;
+    const badge = document.getElementById("reports-badge");
+    badge.style.display = count > 0 ? "inline" : "none";
+    badge.textContent   = count;
+  } catch (ex) {}
+}
+
+// ── SETTINGS ───────────────────────────────────────────────────────
+async function loadSettings() {
+  if (!S.branchId) return;
+  // Load saved email addresses
+  const res = await api("getReportEmails", { branchId: S.branchId });
+  if (res.success) {
+    const emails = res.emails || [];
+    document.getElementById("email1").value = emails[0] || "";
+    document.getElementById("email2").value = emails[1] || "";
+    document.getElementById("email3").value = emails[2] || "";
+  }
+  document.getElementById("rename-val").value = S.branchName;
+}
+
+// saveEmails() — saves up to 3 email addresses for this branch
+async function saveEmails() {
+  const emails = ["email1","email2","email3"]
+    .map(id => document.getElementById(id).value.trim())
+    .filter(Boolean);
+  const res = await api("setReportEmails", { branchId: S.branchId, emails });
+  if (!res.success) { toast(res.error, "err"); return; }
+  toast("✓ Emails saved");
+}
+
+// renameBranch() — renames the current branch
+async function renameBranch() {
+  const newName = document.getElementById("rename-val").value.trim();
+  if (!newName) { toast("Enter a name", "err"); return; }
+  const res = await api("renameBranch", { branchId: S.branchId, newName });
+  if (!res.success) { toast(res.error, "err"); return; }
+  S.branchName = newName;
+  toast("✓ Renamed to " + newName);
+  loadBranches();
+}
+
+// sendReport() — manually triggers a report email right now
+async function sendReport(type) {
+  toast("⏳ Sending report…", "info");
+  const res = await api("sendManualReport", { branchId: S.branchId, type });
+  if (!res.success) { toast(res.error, "err"); return; }
+  toast(`✓ ${type === "monthly" ? "Monthly" : "Daily"} report sent to ${res.sent} recipient(s)`);
+}
+
+// fixBranch() — repairs sheet structure for the current branch
+async function fixBranch() {
+  if (!S.branchId) { toast("Select a branch first", "err"); return; }
+  toast("⏳ Fixing branch…", "info");
+  const res = await api("fixBranch", { branchId: S.branchId });
+  if (!res.success) { toast(res.error, "err"); return; }
+  const result = document.getElementById("fix-result");
+  result.style.display = "block";
+  result.innerHTML = "<strong>Fix results:</strong><br>" + (res.details||[]).join("<br>");
+  toast("✓ Branch repaired");
+}
+
+// masterFix() — fixes ALL branches at once (from branches page or settings)
+async function masterFix() {
+  toast("⏳ Fixing all branches… (this may take 20–30 seconds)", "info", 30000);
+  const res = await api("masterFix", {});
+  if (!res.success) { toast(res.error, "err"); return; }
+  toast("✓ All branches fixed");
+  // Show results if on settings page
+  const result = document.getElementById("fix-result");
+  if (result) {
+    result.style.display = "block";
+    let html = "";
+    Object.entries(res.results || {}).forEach(([branch, details]) => {
+      html += `<strong>${branch}:</strong> ${(details||[]).join(" · ")}<br>`;
+    });
+    result.innerHTML = html;
+  }
+  loadBranches();
+}
+
+// ── ADMIN LOG ──────────────────────────────────────────────────────
+async function loadAdminLog() {
+  const res = await api("getAdminLog", {});
+  if (!res.success) { toast(res.error, "err"); return; }
+  const log  = (res.log || []).reverse(); // newest first
+  const body = document.getElementById("adminlog-body");
+  if (!log.length) {
+    body.innerHTML = '<div class="ld" style="color:var(--muted)">No admin actions logged yet.</div>';
+    return;
+  }
+  body.innerHTML = log.map(l => `
+    <div class="log-row">
+      <div class="log-time">${l.Timestamp||"—"}</div>
+      <div class="log-who">${l.AdminName||l.AdminID||"—"}</div>
+      <div>
+        <div class="log-action">${l.Action||"—"} <span style="color:var(--muted);font-size:11px">${l.BranchID||""}</span></div>
+        <div class="log-detail">${l.Details||""}</div>
+      </div>
+    </div>`).join("");
+}
+
+// ── BOOT ──────────────────────────────────────────────────────────
+// On page load: check for saved session and API URL
+document.addEventListener("DOMContentLoaded", () => {
+  loadApiUrlInLogin(); // show/hide API URL setup section
+
+  // Try to restore session from localStorage
+  const saved = localStorage.getItem("gs_owner_session");
+  if (saved) {
+    try {
+      const session = JSON.parse(saved);
+      S.adminId   = session.adminId;
+      S.adminName = session.adminName;
+      S.role      = session.role;
+      const savedUrl = localStorage.getItem("gs_owner_api_url");
+      if (savedUrl) {
+        S.apiUrl = savedUrl;
+        onLoginSuccess(); // skip login screen
+        return;
+      }
+    } catch (ex) {}
+  }
+  // No session — show login screen
+});
+</script>
+</body>
+</html>
