@@ -814,11 +814,9 @@ function fmtDate(ts) { return String(ts || "").split(" ")[0] || "—"; }
 // ── API HELPER ─────────────────────────────────────────────────────
 // All POST calls go through here. Adds adminId/adminName to every request.
 async function api(action, data = {}) {
-  const res = await fetch(S.apiUrl, {
-    method:  "POST",
-    headers: { "Content-Type": "application/json" },
-    body:    JSON.stringify({ action, adminId: S.adminId, adminName: S.adminName, ...data }),
-  });
+  const payload = { action, adminId: S.adminId, adminName: S.adminName, ...data };
+  const url = S.apiUrl + "?payload=" + encodeURIComponent(JSON.stringify(payload));
+  const res = await fetch(url);
   return res.json();
 }
 
